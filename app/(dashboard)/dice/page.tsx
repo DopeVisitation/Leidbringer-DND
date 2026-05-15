@@ -31,9 +31,11 @@ export default function DicePage() {
   const { user } = useAuth()
   const [config, setConfig] = useState<DiceConfig[]>([])
   const [label, setLabel] = useState('')
+  const [modifier, setModifier] = useState<number>(0)
+  const [sumDice, setSumDice] = useState(true)
   const [rolls, setRolls] = useState<DiceRoll[]>([])
   const [rolling, setRolling] = useState(false)
-  const [lastResult, setLastResult] = useState<{ results: number[][]; total: number } | null>(null)
+  const [lastResult, setLastResult] = useState<{ results: number[][]; total: number; modifier: number; sumDice: boolean } | null>(null)
   const logRef = useRef<HTMLDivElement>(null)
 
   useEffect(() => {
@@ -78,8 +80,9 @@ export default function DicePage() {
     const results = config.map((c) =>
       Array.from({ length: c.count }, () => rollDie(parseSides(c.type)))
     )
-    const total = results.flat().reduce((s, n) => s + n, 0)
-    setLastResult({ results, total })
+    const diceSum = results.flat().reduce((s, n) => s + n, 0)
+    const total = diceSum + modifier
+    setLastResult({ results, total, modifier, sumDice })
 
     await supabase.from('dice_rolls').insert({
       user_id: user.id,
@@ -158,6 +161,35 @@ export default function DicePage() {
           </div>
         )}
 
+        {/* Optionen: Modifier + Addieren-Toggle */}
+        <div className="flex flex-wrap gap-3 items-end">
+          <div className="flex flex-col gap-1">
+            <label className="text-xs text-zinc-500 font-medium">Modifier</label>
+            <input
+              type="number"
+              value={modifier}
+              onChange={(e) => setModifier(parseInt(e.target.value) || 0)}
+              className="w-24 bg-zinc-800 border border-zinc-700 rounded-lg px-3 py-2 text-sm text-zinc-100 text-center font-bold focus:outline-none focus:border-amber-500"
+              placeholder="0"
+            />
+          </div>
+
+          <button
+            type="button"
+            onClick={() => setSumDice(!sumDice)}
+            className={`flex items-center gap-2 px-4 py-2 rounded-lg border text-sm font-medium transition-colors ${
+              sumDice
+                ? 'bg-amber-600/20 border-amber-500/60 text-amber-300'
+                : 'bg-zinc-800 border-zinc-700 text-zinc-400 hover:border-zinc-500'
+            }`}
+          >
+            <span className={`w-4 h-4 rounded flex items-center justify-center text-xs border ${sumDice ? 'bg-amber-500 border-amber-500 text-white' : 'border-zinc-600'}`}>
+              {sumDice ? '✓' : ''}
+            </span>
+            Würfel addieren
+          </button>
+        </div>
+
         <div className="flex gap-3">
           <input
             type="text"
@@ -181,11 +213,46 @@ export default function DicePage() {
       {lastResult && (
         <div className="bg-zinc-900 border border-amber-600/40 rounded-xl p-4 space-y-2">
           <p className="text-xs font-medium text-amber-400/70 uppercase tracking-wide">Letzter Wurf</p>
-          <p className="text-xs text-zinc-500">{formatResults(config, lastResult.results)}</p>
-          <div className="flex items-baseline gap-2">
-            <span className="text-4xl font-black text-amber-400">{lastResult.total}</span>
-            <span className="text-sm text-zinc-500">Gesamt ({formatConfig(config)})</span>
-          </div>
+          {lastResult.sumDice ? (
+            <>
+              <p className="text-xs text-zinc-500">{formatResults(config, lastResult.results)}</p>
+              <div className="flex items-baseline gap-2 flex-wrap">
+                <span className="text-4xl font-black text-amber-400">{lastResult.total}</span>
+                <span className="text-sm text-zinc-500">
+                  Gesamt ({formatConfig(config)}
+                  {lastResult.modifier !== 0 && (
+                    <span className={lastResult.modifier > 0 ? 'text-green-400' : 'text-red-400'}>
+                      {lastResult.modifier > 0 ? ` +${lastResult.modifier}` : ` ${lastResult.modifier}`}
+                    </span>
+                  )}
+                  )
+                </span>
+              </div>
+            </>
+          ) : (
+            <>
+              <p className="text-xs text-zinc-400 mb-1">Einzelergebnisse:</p>
+              <div className="flex flex-wrap gap-2">
+                {config.map((c, ci) =>
+                  (lastResult.results[ci] ?? []).map((val, vi) => (
+                    <span
+                      key={`${ci}-${vi}`}
+                      className={`text-2xl font-black px-3 py-1.5 rounded-lg bg-zinc-800 border border-zinc-700 ${RARITY_COLORS[c.type]}`}
+                    >
+                      {val}
+                      <span className="text-xs text-zinc-500 ml-1 font-normal">{c.type}</span>
+                    </span>
+                  ))
+                )}
+                {lastResult.modifier !== 0 && (
+                  <span className={`text-2xl font-black px-3 py-1.5 rounded-lg bg-zinc-800 border border-zinc-700 ${lastResult.modifier > 0 ? 'text-green-400' : 'text-red-400'}`}>
+                    {lastResult.modifier > 0 ? `+${lastResult.modifier}` : lastResult.modifier}
+                    <span className="text-xs text-zinc-500 ml-1 font-normal">Mod</span>
+                  </span>
+                )}
+              </div>
+            </>
+          )}
         </div>
       )}
 

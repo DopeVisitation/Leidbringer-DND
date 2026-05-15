@@ -1,7 +1,7 @@
 'use client'
 
 import { useState, useEffect } from 'react'
-import { Backpack, Plus, Trash2, X } from 'lucide-react'
+import { Backpack, Plus, Trash2, X, User } from 'lucide-react'
 import { createClient } from '@/lib/supabase/client'
 import { useAuth } from '@/lib/hooks/useAuth'
 import type { LootItem, LootRarity } from '@/types'
@@ -21,6 +21,8 @@ const LOOT_ICONS = [
   '🗺️','🧲','🪬','🎁','🐉','💀','🌟','🔥','❄️','☠️',
 ]
 
+type Tab = 'group' | 'personal'
+
 export default function LootPage() {
   const supabase = createClient()
   const { user, isGM } = useAuth()
@@ -34,6 +36,7 @@ export default function LootPage() {
   })
   const [saving, setSaving] = useState(false)
   const [filterRarity, setFilterRarity] = useState<LootRarity | 'all'>('all')
+  const [activeTab, setActiveTab] = useState<Tab>('group')
 
   useEffect(() => {
     loadItems()
@@ -80,7 +83,18 @@ export default function LootPage() {
     await supabase.from('loot_items').update({ assigned_to: userId || null }).eq('id', id)
   }
 
-  const filtered = filterRarity === 'all' ? items : items.filter((i) => i.rarity === filterRarity)
+  // Group loot = not assigned to anyone
+  const groupItems = items.filter((i) => !i.assigned_to)
+  // Personal loot = assigned to current user (players see own; GM sees all assigned)
+  const personalItems = isGM
+    ? items.filter((i) => i.assigned_to)
+    : items.filter((i) => i.assigned_to === user?.id)
+
+  const applyRarityFilter = (list: LootItem[]) =>
+    filterRarity === 'all' ? list : list.filter((i) => i.rarity === filterRarity)
+
+  const displayItems = applyRarityFilter(activeTab === 'group' ? groupItems : personalItems)
+  const tabItems = activeTab === 'group' ? groupItems : personalItems
 
   return (
     <div className="p-4 md:p-6 max-w-3xl mx-auto space-y-5">
@@ -95,6 +109,38 @@ export default function LootPage() {
           className="flex items-center gap-2 px-4 py-2 rounded-lg bg-amber-600 hover:bg-amber-500 text-sm font-semibold text-white transition-colors"
         >
           <Plus className="w-4 h-4" /> Hinzufügen
+        </button>
+      </div>
+
+      {/* Tabs: Gruppen-Loot / Persönlicher Loot */}
+      <div className="flex gap-1 bg-zinc-900 border border-zinc-800 rounded-xl p-1">
+        <button
+          onClick={() => setActiveTab('group')}
+          className={`flex-1 flex items-center justify-center gap-2 py-2 rounded-lg text-sm font-medium transition-colors ${
+            activeTab === 'group'
+              ? 'bg-amber-600 text-white'
+              : 'text-zinc-400 hover:text-zinc-200'
+          }`}
+        >
+          <Backpack className="w-4 h-4" />
+          Gruppen-Loot
+          <span className={`text-xs px-1.5 py-0.5 rounded-full ${activeTab === 'group' ? 'bg-amber-700 text-amber-100' : 'bg-zinc-800 text-zinc-500'}`}>
+            {groupItems.length}
+          </span>
+        </button>
+        <button
+          onClick={() => setActiveTab('personal')}
+          className={`flex-1 flex items-center justify-center gap-2 py-2 rounded-lg text-sm font-medium transition-colors ${
+            activeTab === 'personal'
+              ? 'bg-amber-600 text-white'
+              : 'text-zinc-400 hover:text-zinc-200'
+          }`}
+        >
+          <User className="w-4 h-4" />
+          {isGM ? 'Zugewiesener Loot' : 'Mein Loot'}
+          <span className={`text-xs px-1.5 py-0.5 rounded-full ${activeTab === 'personal' ? 'bg-amber-700 text-amber-100' : 'bg-zinc-800 text-zinc-500'}`}>
+            {personalItems.length}
+          </span>
         </button>
       </div>
 
@@ -168,7 +214,7 @@ export default function LootPage() {
               onChange={(e) => setForm((p) => ({ ...p, assigned_to: e.target.value }))}
               className="w-full bg-zinc-800 border border-zinc-700 rounded-lg px-3 py-2.5 text-sm text-zinc-100 focus:outline-none focus:border-amber-500"
             >
-              <option value="">Niemandem zugewiesen</option>
+              <option value="">Gruppen-Loot (niemandem zugewiesen)</option>
               {profiles.map((p) => <option key={p.id} value={p.id}>{p.username}</option>)}
             </select>
 
@@ -188,10 +234,10 @@ export default function LootPage() {
           onClick={() => setFilterRarity('all')}
           className={`px-3 py-1.5 rounded-lg text-xs font-medium transition-colors ${filterRarity === 'all' ? 'bg-amber-600 text-white' : 'bg-zinc-800 text-zinc-400 hover:bg-zinc-700'}`}
         >
-          Alle ({items.length})
+          Alle ({tabItems.length})
         </button>
         {(Object.keys(RARITY_CONFIG) as LootRarity[]).map((r) => {
-          const cnt = items.filter((i) => i.rarity === r).length
+          const cnt = tabItems.filter((i) => i.rarity === r).length
           if (!cnt) return null
           return (
             <button
@@ -205,17 +251,28 @@ export default function LootPage() {
         })}
       </div>
 
+      {/* Tab-Beschreibung */}
+      {activeTab === 'personal' && !isGM && personalItems.length === 0 && (
+        <div className="text-center text-zinc-600 py-10">
+          <User className="w-10 h-10 mx-auto mb-3 opacity-30" />
+          <p className="text-sm">Dir wurde noch kein Loot zugewiesen.</p>
+        </div>
+      )}
+
       {/* Liste */}
-      {filtered.length === 0 ? (
+      {displayItems.length === 0 && !(activeTab === 'personal' && !isGM && personalItems.length === 0) ? (
         <div className="text-center text-zinc-600 py-16">
           <Backpack className="w-10 h-10 mx-auto mb-3 opacity-30" />
-          <p className="text-sm">Noch kein Loot eingetragen.</p>
+          <p className="text-sm">
+            {activeTab === 'group' ? 'Kein Gruppen-Loot vorhanden.' : 'Kein zugewiesener Loot.'}
+          </p>
         </div>
       ) : (
         <div className="space-y-2">
-          {filtered.map((item) => {
+          {displayItems.map((item) => {
             const rCfg = RARITY_CONFIG[item.rarity ?? 'common']
             const canDelete = isGM || item.created_by === user?.id
+            const canAssign = isGM || item.created_by === user?.id
             return (
               <div key={item.id} className={`border rounded-xl p-4 flex items-start gap-4 transition-all ${rCfg.border} ${rCfg.bg} ${rCfg.glow}`}>
                 {/* Icon */}
@@ -246,18 +303,18 @@ export default function LootPage() {
 
                   <div className="flex items-center gap-3 mt-2 flex-wrap">
                     <span className="text-xs text-zinc-600">Von: {(item.creator as any)?.username ?? '?'}</span>
-                    {(isGM || item.created_by === user?.id) ? (
+                    {canAssign ? (
                       <select
                         value={(item.assigned_profile as any)?.id ?? ''}
                         onChange={(e) => handleAssign(item.id, e.target.value)}
                         className="text-xs bg-zinc-800/50 border border-zinc-700 rounded px-2 py-1 text-zinc-300 focus:outline-none focus:border-amber-500"
                       >
-                        <option value="">Nicht zugewiesen</option>
+                        <option value="">Gruppen-Loot</option>
                         {profiles.map((p) => <option key={p.id} value={p.id}>{p.username}</option>)}
                       </select>
-                    ) : (item.assigned_profile as any)?.username ? (
+                    ) : activeTab === 'personal' ? (
                       <span className={`text-xs font-medium ${rCfg.text}`}>
-                        → {(item.assigned_profile as any).username}
+                        → {(item.assigned_profile as any)?.username ?? '?'}
                       </span>
                     ) : null}
                   </div>
