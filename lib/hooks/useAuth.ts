@@ -24,7 +24,27 @@ export function useAuth() {
         .eq('id', authUser.id)
         .single()
 
-      setUser(profile)
+      if (profile) {
+        setUser(profile)
+      } else {
+        // Profile not created by trigger yet — build from auth metadata
+        const meta = authUser.user_metadata ?? {}
+        const fallback: User = {
+          id: authUser.id,
+          username: meta.username ?? authUser.email?.split('@')[0] ?? 'Spieler',
+          email: authUser.email ?? '',
+          role: meta.role ?? 'player',
+          created_at: authUser.created_at,
+        }
+        // Try to insert the profile manually (trigger might have failed)
+        await supabase.from('profiles').upsert({
+          id: authUser.id,
+          username: fallback.username,
+          role: fallback.role,
+        }, { onConflict: 'id' })
+        setUser(fallback)
+      }
+
       setLoading(false)
     }
 
@@ -39,6 +59,7 @@ export function useAuth() {
 
   const signOut = async () => {
     await supabase.auth.signOut()
+    window.location.href = '/login'
   }
 
   return { user, loading, signOut, isGM: user?.role === 'gm' }
