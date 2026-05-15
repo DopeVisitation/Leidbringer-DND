@@ -5,6 +5,7 @@ import { ArrowLeft, Trash2 } from 'lucide-react'
 import { useAuth } from '@/lib/hooks/useAuth'
 import { useSession } from '@/lib/hooks/useSessions'
 import { SessionCard } from '@/components/sessions/SessionCard'
+import { SessionSummarySection } from '@/components/sessions/SessionSummary'
 import { createClient } from '@/lib/supabase/client'
 import { formatDate, formatTime } from '@/lib/utils'
 
@@ -60,6 +61,11 @@ export default function SessionDetailPage() {
       </div>
 
       <SessionCard session={session} currentUser={user} />
+
+      <div className="pt-2">
+        <h2 className="text-base font-semibold text-zinc-200 mb-3">Zusammenfassung & Feedback</h2>
+        <SessionSummarySection sessionId={session.id} currentUser={user} isGM={isGM} />
+      </div>
     </div>
   )
 }

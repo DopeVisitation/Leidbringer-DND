@@ -2,15 +2,15 @@
 
 import Link from 'next/link'
 import { usePathname } from 'next/navigation'
-import { CalendarDays, BookOpen, ScrollText, Shield, Sword } from 'lucide-react'
+import { CalendarDays, Shield, Dices, Map, Backpack } from 'lucide-react'
 import { cn } from '@/lib/utils'
 
 const navItems = [
   { href: '/dashboard', label: 'Home', icon: Shield },
   { href: '/sessions', label: 'Sessions', icon: CalendarDays },
-  { href: '/notes', label: 'Notizen', icon: ScrollText },
-  { href: '/characters', label: 'Char.', icon: Sword },
-  { href: '/rules', label: 'Regeln', icon: BookOpen },
+  { href: '/quests', label: 'Quests', icon: Map },
+  { href: '/dice', label: 'Würfel', icon: Dices },
+  { href: '/loot', label: 'Loot', icon: Backpack },
 ]
 
 export function MobileNav() {

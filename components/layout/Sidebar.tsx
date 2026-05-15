@@ -10,6 +10,10 @@ import {
   LogOut,
   Shield,
   Sword,
+  Dices,
+  Backpack,
+  Map,
+  Settings,
 } from 'lucide-react'
 import { cn } from '@/lib/utils'
 import { useAuth } from '@/lib/hooks/useAuth'
@@ -17,6 +21,9 @@ import { useAuth } from '@/lib/hooks/useAuth'
 const navItems = [
   { href: '/dashboard', label: 'Übersicht', icon: Shield },
   { href: '/sessions', label: 'Sessions', icon: CalendarDays },
+  { href: '/quests', label: 'Quests', icon: Map },
+  { href: '/dice', label: 'Würfelwürfe', icon: Dices },
+  { href: '/loot', label: 'Loot', icon: Backpack },
   { href: '/notes', label: 'Notizen', icon: ScrollText },
   { href: '/characters', label: 'Charaktere', icon: Sword },
   { href: '/rules', label: 'Grundregeln', icon: BookOpen },
@@ -61,6 +68,21 @@ export function Sidebar() {
             </Link>
           )
         })}
+
+        {isGM && (
+          <Link
+            href="/admin"
+            className={cn(
+              'flex items-center gap-3 px-3 py-2.5 rounded-lg text-sm font-medium transition-colors mt-2',
+              pathname === '/admin'
+                ? 'bg-amber-600/20 text-amber-400 border border-amber-600/30'
+                : 'text-zinc-600 hover:text-zinc-400 hover:bg-zinc-800'
+            )}
+          >
+            <Settings className="w-4 h-4 flex-shrink-0" />
+            Admin
+          </Link>
+        )}
       </nav>
 
       {user && (

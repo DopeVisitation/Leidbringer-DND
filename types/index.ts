@@ -6,6 +6,12 @@ export type ResponseStatus = 'accepted' | 'maybe' | 'declined'
 
 export type AttendanceType = 'online' | 'presence' | 'both'
 
+export type QuestType = 'main' | 'side'
+
+export type QuestStatus = 'active' | 'completed' | 'failed'
+
+export type LootRarity = 'common' | 'uncommon' | 'rare' | 'very_rare' | 'legendary'
+
 export interface User {
   id: string
   username: string
@@ -36,6 +42,25 @@ export interface SessionResponse {
   status: ResponseStatus
   attendance_type?: AttendanceType
   created_at: string
+  updated_at: string
+  user?: User
+}
+
+export interface SessionSummary {
+  id: string
+  session_id: string
+  gm_summary: string
+  created_by: string
+  updated_at: string
+}
+
+export interface SessionPlayerFeedback {
+  id: string
+  session_id: string
+  user_id: string
+  feedback_text: string
+  character_liked?: string
+  character_disliked?: string
   updated_at: string
   user?: User
 }
@@ -75,6 +100,60 @@ export interface CharacterLink {
   level: number
   created_at: string
   updated_at: string
+}
+
+export interface DiceConfig {
+  type: string
+  count: number
+}
+
+export interface DiceRoll {
+  id: string
+  user_id: string
+  dice_config: DiceConfig[]
+  results: number[][]
+  total: number
+  label?: string
+  created_at: string
+  user?: User
+}
+
+export interface LootItem {
+  id: string
+  name: string
+  description?: string
+  quantity: number
+  rarity: LootRarity
+  session_id?: string
+  assigned_to?: string
+  created_by: string
+  created_at: string
+  assigned_profile?: User
+  creator?: User
+  session?: Session
+}
+
+export interface Quest {
+  id: string
+  title: string
+  description?: string
+  type: QuestType
+  status: QuestStatus
+  created_by: string
+  created_at: string
+  updated_at: string
+  creator?: User
+  ratings?: QuestRating[]
+}
+
+export interface QuestRating {
+  id: string
+  quest_id: string
+  user_id: string
+  player_interest: number
+  character_interest: number
+  updated_at: string
+  user?: User
 }
 
 export interface DnDRule {

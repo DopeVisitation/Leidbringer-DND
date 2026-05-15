@@ -26,13 +26,13 @@ export default function LoginPage() {
     })
 
     if (error) {
-      if (
-        error.message.toLowerCase().includes('email not confirmed') ||
-        error.message.toLowerCase().includes('not confirmed')
-      ) {
+      const msg = error.message.toLowerCase()
+      if (msg.includes('email not confirmed') || msg.includes('not confirmed')) {
         setNeedsConfirm(true)
-      } else {
+      } else if (msg.includes('invalid login') || msg.includes('invalid credentials') || msg.includes('wrong')) {
         setError('E-Mail oder Passwort falsch.')
+      } else {
+        setError(error.message)
       }
       setLoading(false)
     } else {
@@ -66,7 +66,15 @@ export default function LoginPage() {
           </div>
 
           <div>
-            <label className="block text-sm font-medium text-zinc-300 mb-1.5">Passwort</label>
+            <div className="flex items-center justify-between mb-1.5">
+              <label className="text-sm font-medium text-zinc-300">Passwort</label>
+              <Link
+                href="/forgot-password"
+                className="text-xs text-zinc-500 hover:text-amber-400 transition-colors"
+              >
+                Passwort vergessen?
+              </Link>
+            </div>
             <input
               type="password"
               required
