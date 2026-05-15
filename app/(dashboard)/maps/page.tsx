@@ -5,31 +5,95 @@ import { MapPin, Plus, Trash2, X, ZoomIn, ZoomOut, Search, Move, Edit2 } from 'l
 import { createClient } from '@/lib/supabase/client'
 import { useAuth } from '@/lib/hooks/useAuth'
 
-const MAP_URL = 'https://media.dndbeyond.com/compendium-images/basic-rules/PBrbTjBHOAE8mjRo/map-faerun.jpg'
-const MAP_W = 3300
-const MAP_H = 2550
+const MAP_URL = '/faerun-map.jpg'
+const MAP_W = 4096
+const MAP_H = 3072
 
 const KNOWN_LOCATIONS = [
-  { name: 'Waterdeep',       x: 20.5, y: 26.0 },
-  { name: 'Baldur\'s Gate',  x: 18.5, y: 45.5 },
-  { name: 'Neverwinter',     x: 16.5, y: 18.5 },
-  { name: 'Silverymoon',     x: 33.0, y: 19.0 },
-  { name: 'Candlekeep',      x: 17.5, y: 48.0 },
-  { name: 'Elturel',         x: 29.5, y: 44.0 },
-  { name: 'Amn',             x: 20.0, y: 51.0 },
-  { name: 'Cormyr',          x: 49.5, y: 37.0 },
-  { name: 'Suzail',          x: 50.5, y: 38.5 },
-  { name: 'Zhentil Keep',    x: 49.0, y: 27.5 },
-  { name: 'Mulmaster',       x: 57.5, y: 27.0 },
-  { name: 'Sembia',          x: 54.0, y: 35.0 },
-  { name: 'Calimshan',       x: 23.0, y: 60.0 },
-  { name: 'Thay',            x: 64.5, y: 30.5 },
-  { name: 'Icewind Dale',    x: 22.0, y: 6.0  },
-  { name: 'Luskan',          x: 16.0, y: 14.0 },
-  { name: 'Mirabar',         x: 18.5, y: 13.0 },
-  { name: 'Hillsfar',        x: 51.5, y: 30.5 },
-  { name: 'Westgate',        x: 49.0, y: 45.5 },
-  { name: 'Iriaebor',        x: 36.0, y: 44.5 },
+  // Sword Coast & The North
+  { name: 'Waterdeep',           x: 18.6, y: 28.3 },
+  { name: 'Neverwinter',         x: 14.2, y: 17.2 },
+  { name: 'Luskan',              x: 16.1, y: 15.5 },
+  { name: 'Port Llast',          x: 13.9, y: 19.5 },
+  { name: 'Leilon',              x: 13.5, y: 22.5 },
+  { name: 'Daggerford',          x: 17.1, y: 33.9 },
+  { name: 'Baldur\'s Gate',      x: 16.8, y: 50.0 },
+  { name: 'Candlekeep',          x: 16.5, y: 53.5 },
+  // The North & Silver Marches
+  { name: 'Mirabar',             x: 19.3, y: 11.7 },
+  { name: 'Mithral Hall',        x: 28.1, y: 19.2 },
+  { name: 'Silverymoon',         x: 33.2, y: 15.6 },
+  { name: 'Everlund',            x: 31.0, y: 17.3 },
+  { name: 'Sundabar',            x: 36.1, y: 16.1 },
+  { name: 'Citadel Adbar',       x: 38.6, y: 12.0 },
+  { name: 'Longsaddle',          x: 23.8, y: 23.8 },
+  { name: 'Triboar',             x: 25.6, y: 26.7 },
+  { name: 'Yartar',              x: 26.0, y: 27.7 },
+  { name: 'Secomber',            x: 25.9, y: 33.9 },
+  { name: 'Deadsnows',           x: 28.5, y: 16.0 },
+  // Icewind Dale
+  { name: 'Bryn Shander',        x: 24.0, y: 6.0  },
+  { name: 'Icewind Dale',        x: 22.0, y: 5.0  },
+  // Western Heartlands
+  { name: 'Elturel',             x: 26.9, y: 46.9 },
+  { name: 'Berdusk',             x: 28.1, y: 45.9 },
+  { name: 'Scornubel',           x: 25.9, y: 44.8 },
+  { name: 'Iriaebor',            x: 33.7, y: 44.1 },
+  { name: 'Darkhold',            x: 36.5, y: 40.5 },
+  // Amn, Tethyr, Calimshan
+  { name: 'Athkatla',            x: 21.0, y: 57.0 },
+  { name: 'Nashkel',             x: 19.8, y: 54.7 },
+  { name: 'Zazesspur',           x: 18.3, y: 61.8 },
+  { name: 'Memnon',              x: 20.0, y: 63.5 },
+  { name: 'Calimport',           x: 21.2, y: 70.0 },
+  // Moonsea & Zhentarim
+  { name: 'Zhentil Keep',        x: 47.9, y: 25.4 },
+  { name: 'Phlan',               x: 48.6, y: 25.9 },
+  { name: 'Hillsfar',            x: 49.8, y: 28.0 },
+  { name: 'Mulmaster',           x: 55.7, y: 26.0 },
+  { name: 'Melvaunt',            x: 54.9, y: 25.1 },
+  // Cormyr & Dales
+  { name: 'Suzail',              x: 49.8, y: 38.1 },
+  { name: 'Arabel',              x: 48.6, y: 32.9 },
+  { name: 'Tilverton',           x: 49.6, y: 32.6 },
+  { name: 'Marsember',           x: 51.5, y: 40.0 },
+  { name: 'Shadowdale',          x: 51.0, y: 32.1 },
+  { name: 'Myth Drannor',        x: 52.5, y: 30.5 },
+  // Sembia
+  { name: 'Ordulin',             x: 53.2, y: 35.2 },
+  { name: 'Selgaunt',            x: 54.7, y: 38.9 },
+  { name: 'Saerloon',            x: 53.7, y: 41.0 },
+  { name: 'Daerlun',             x: 52.5, y: 35.5 },
+  // Turmish & Dragon Coast
+  { name: 'Alaghôn',             x: 51.5, y: 45.1 },
+  { name: 'Westgate',            x: 49.0, y: 44.0 },
+  // Chessenta
+  { name: 'Luthcheq',            x: 60.1, y: 41.7 },
+  { name: 'Airspur',             x: 63.5, y: 43.0 },
+  { name: 'Cimbar',              x: 60.5, y: 44.0 },
+  // Thay
+  { name: 'Eltabbar',            x: 68.8, y: 26.7 },
+  { name: 'Bezantur',            x: 66.4, y: 33.2 },
+  { name: 'Tyraturos',           x: 64.0, y: 29.1 },
+  { name: 'Pyarados',            x: 67.6, y: 27.5 },
+  // Aglarond & Rashemen
+  { name: 'Velprintalar',        x: 71.8, y: 34.0 },
+  { name: 'Immilmar',            x: 70.1, y: 19.4 },
+  { name: 'Thesk',               x: 74.5, y: 24.7 },
+  // Unther & Mulhorand
+  { name: 'Unthalass',           x: 63.5, y: 50.0 },
+  { name: 'Messemprar',          x: 66.2, y: 50.1 },
+  { name: 'Skuld',               x: 67.6, y: 60.9 },
+  // The Shaar & South
+  { name: 'The Shaar',           x: 57.1, y: 68.0 },
+  { name: 'Lapaliiya',           x: 44.2, y: 72.3 },
+  { name: 'Halruaa',             x: 46.9, y: 77.8 },
+  { name: 'Dambrath',            x: 52.2, y: 79.4 },
+  { name: 'Luiren',              x: 46.2, y: 81.7 },
+  // Anauroch
+  { name: 'Anauroch',            x: 44.9, y: 14.6 },
+  // Narfell & Hordelands
+  { name: 'Narfell',             x: 68.0, y: 15.0 },
 ]
 
 const MARKER_COLORS = [
