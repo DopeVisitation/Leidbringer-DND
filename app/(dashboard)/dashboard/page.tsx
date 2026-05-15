@@ -46,7 +46,6 @@ export default function DashboardPage() {
 
   return (
     <div className="p-4 md:p-6 max-w-3xl mx-auto space-y-6">
-      {/* Header */}
       <div>
         <h1 className="text-2xl font-bold text-zinc-100">
           Willkommen, {user.username}! {isGM ? '⚔️' : '🎲'}
@@ -56,7 +55,6 @@ export default function DashboardPage() {
         </p>
       </div>
 
-      {/* Character banner (players only) */}
       {!isGM && character && (
         <Link href="/characters" className="block">
           <div className="bg-amber-900/20 border border-amber-700/40 rounded-xl p-4 flex items-center gap-4 hover:bg-amber-900/30 transition-colors">
@@ -84,7 +82,6 @@ export default function DashboardPage() {
         </Link>
       )}
 
-      {/* Quick stats */}
       <div className="grid grid-cols-2 gap-3">
         <div className="bg-zinc-900 border border-zinc-800 rounded-xl p-4">
           <CalendarDays className="w-5 h-5 text-amber-500 mb-2" />
@@ -98,7 +95,6 @@ export default function DashboardPage() {
         </div>
       </div>
 
-      {/* Upcoming sessions */}
       <div>
         <div className="flex items-center justify-between mb-3">
           <h2 className="text-base font-semibold text-zinc-200">Nächste Sessions</h2>
@@ -158,7 +154,6 @@ export default function DashboardPage() {
         </div>
       </div>
 
-      {/* Quick nav */}
       <div className="grid grid-cols-2 gap-3">
         {[
           { href: '/notes', icon: ScrollText, label: 'Meine Notizen', color: 'text-blue-400' },
