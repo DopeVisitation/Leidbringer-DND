@@ -6,13 +6,13 @@ import {
   CalendarDays,
   BookOpen,
   ScrollText,
-  User,
   LogOut,
   Shield,
   Sword,
   Dices,
   Backpack,
   Map,
+  MapPin,
   Settings,
 } from 'lucide-react'
 import { cn } from '@/lib/utils'
@@ -22,6 +22,7 @@ const navItems = [
   { href: '/dashboard', label: 'Übersicht', icon: Shield },
   { href: '/sessions', label: 'Sessions', icon: CalendarDays },
   { href: '/quests', label: 'Quests', icon: Map },
+  { href: '/maps', label: 'Karte', icon: MapPin },
   { href: '/dice', label: 'Würfelwürfe', icon: Dices },
   { href: '/loot', label: 'Loot', icon: Backpack },
   { href: '/notes', label: 'Notizen', icon: ScrollText },

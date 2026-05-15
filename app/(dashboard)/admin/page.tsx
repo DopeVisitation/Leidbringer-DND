@@ -14,19 +14,20 @@ interface Profile {
 
 export default function AdminPage() {
   const router = useRouter()
-  const { user, isGM } = useAuth()
+  const { user, isGM, loading } = useAuth()
   const supabase = createClient()
   const [profiles, setProfiles] = useState<Profile[]>([])
   const [selectedUser, setSelectedUser] = useState('')
   const [newPassword, setNewPassword] = useState('')
   const [showPassword, setShowPassword] = useState(false)
-  const [loading, setLoading] = useState(false)
+  const [submitting, setSubmitting] = useState(false)
   const [result, setResult] = useState<{ ok: boolean; msg: string } | null>(null)
 
   useEffect(() => {
-    if (isGM === false) { router.replace('/dashboard'); return }
+    if (loading) return
+    if (!isGM) { router.replace('/dashboard'); return }
     loadProfiles()
-  }, [isGM])
+  }, [isGM, loading])
 
   const loadProfiles = async () => {
     const { data } = await supabase.from('profiles').select('id, username, role').order('username')
@@ -36,7 +37,7 @@ export default function AdminPage() {
   const handleReset = async (e: React.FormEvent) => {
     e.preventDefault()
     if (!selectedUser || newPassword.length < 6) return
-    setLoading(true)
+    setSubmitting(true)
     setResult(null)
 
     const res = await fetch('/api/admin/set-password', {
@@ -53,9 +54,10 @@ export default function AdminPage() {
     } else {
       setResult({ ok: false, msg: data.error ?? 'Unbekannter Fehler.' })
     }
-    setLoading(false)
+    setSubmitting(false)
   }
 
+  if (loading) return <div className="p-6 text-zinc-500 text-sm">Laden...</div>
   if (!isGM) return null
 
   return (
@@ -128,10 +130,10 @@ export default function AdminPage() {
 
           <button
             type="submit"
-            disabled={loading || !selectedUser || newPassword.length < 6}
+            disabled={submitting || !selectedUser || newPassword.length < 6}
             className="w-full py-2.5 rounded-lg bg-amber-600 hover:bg-amber-500 disabled:opacity-50 text-sm font-bold text-white transition-colors"
           >
-            {loading ? 'Wird gesetzt...' : 'Passwort setzen'}
+            {submitting ? 'Wird gesetzt...' : 'Passwort setzen'}
           </button>
         </form>
       </div>

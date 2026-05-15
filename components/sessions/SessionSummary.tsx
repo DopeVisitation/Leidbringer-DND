@@ -1,7 +1,7 @@
 'use client'
 
 import { useState, useEffect } from 'react'
-import { BookOpen, Save, ChevronDown, ChevronUp, ThumbsUp, ThumbsDown, MessageSquare } from 'lucide-react'
+import { BookOpen, Save, ChevronDown, ChevronUp, ThumbsUp, ThumbsDown, MessageSquare, AlertCircle } from 'lucide-react'
 import { createClient } from '@/lib/supabase/client'
 import type { User, SessionSummary, SessionPlayerFeedback } from '@/types'
 
@@ -20,22 +20,34 @@ export function SessionSummarySection({ sessionId, currentUser, isGM }: Props) {
   const [savingGM, setSavingGM] = useState(false)
   const [savingFeedback, setSavingFeedback] = useState(false)
   const [showFeedbacks, setShowFeedbacks] = useState(false)
+  const [dbError, setDbError] = useState(false)
+  const [loaded, setLoaded] = useState(false)
 
-  useEffect(() => {
-    loadData()
-  }, [sessionId])
+  useEffect(() => { loadData() }, [sessionId])
 
   const loadData = async () => {
-    const [{ data: sum }, { data: fb }] = await Promise.all([
-      supabase.from('session_summaries').select('*').eq('session_id', sessionId).maybeSingle(),
-      supabase.from('session_player_feedback').select('*, user:profiles(id,username,role)').eq('session_id', sessionId),
-    ])
-    if (sum) { setSummary(sum); setGmText(sum.gm_summary) }
-    if (fb) {
-      setFeedbacks(fb as SessionPlayerFeedback[])
-      const mine = fb.find((f: SessionPlayerFeedback) => f.user_id === currentUser.id)
-      if (mine) setMyFeedback({ feedback_text: mine.feedback_text, character_liked: mine.character_liked ?? '', character_disliked: mine.character_disliked ?? '' })
+    try {
+      const [sumRes, fbRes] = await Promise.all([
+        supabase.from('session_summaries').select('*').eq('session_id', sessionId).maybeSingle(),
+        supabase.from('session_player_feedback').select('*, user:profiles(id,username,role)').eq('session_id', sessionId),
+      ])
+
+      if (sumRes.error?.message?.includes('does not exist') || fbRes.error?.message?.includes('does not exist')) {
+        setDbError(true)
+        setLoaded(true)
+        return
+      }
+
+      if (sumRes.data) { setSummary(sumRes.data); setGmText(sumRes.data.gm_summary) }
+      if (fbRes.data) {
+        setFeedbacks(fbRes.data as SessionPlayerFeedback[])
+        const mine = fbRes.data.find((f: SessionPlayerFeedback) => f.user_id === currentUser.id)
+        if (mine) setMyFeedback({ feedback_text: mine.feedback_text, character_liked: mine.character_liked ?? '', character_disliked: mine.character_disliked ?? '' })
+      }
+    } catch {
+      setDbError(true)
     }
+    setLoaded(true)
   }
 
   const saveGMSummary = async () => {
@@ -61,6 +73,18 @@ export function SessionSummarySection({ sessionId, currentUser, isGM }: Props) {
     setSavingFeedback(false)
   }
 
+  if (!loaded) return <div className="h-24 rounded-xl bg-zinc-800/40 animate-pulse" />
+
+  if (dbError) return (
+    <div className="flex items-start gap-3 bg-amber-900/10 border border-amber-800/30 rounded-xl px-4 py-3">
+      <AlertCircle className="w-4 h-4 text-amber-400 flex-shrink-0 mt-0.5" />
+      <div className="text-sm text-amber-300">
+        <p className="font-medium">Tabellen fehlen</p>
+        <p className="text-amber-400 text-xs mt-1">Bitte führe <code>schema_v2.sql</code> im Supabase SQL Editor aus, damit die Zusammenfassungs-Funktion funktioniert.</p>
+      </div>
+    </div>
+  )
+
   return (
     <div className="space-y-4">
       {/* GM Zusammenfassung */}
@@ -71,14 +95,12 @@ export function SessionSummarySection({ sessionId, currentUser, isGM }: Props) {
             <h3 className="text-sm font-semibold text-zinc-200">GM-Zusammenfassung</h3>
           </div>
           <textarea
-            rows={5}
-            value={gmText}
+            rows={5} value={gmText}
             onChange={(e) => setGmText(e.target.value)}
             placeholder="Was ist in dieser Session passiert? Schreibe eine Zusammenfassung für alle..."
             className="w-full bg-zinc-800 border border-zinc-700 rounded-lg px-3 py-2.5 text-sm text-zinc-100 placeholder-zinc-500 focus:outline-none focus:border-amber-500 resize-none"
           />
 
-          {/* Spielerfeedback als Inspiration */}
           {feedbacks.length > 0 && (
             <div className="bg-zinc-800/50 border border-zinc-700 rounded-lg p-3 space-y-2">
               <p className="text-xs font-medium text-zinc-400">Spieler-Feedback als Inspiration:</p>
@@ -94,8 +116,7 @@ export function SessionSummarySection({ sessionId, currentUser, isGM }: Props) {
           )}
 
           <button
-            onClick={saveGMSummary}
-            disabled={savingGM}
+            onClick={saveGMSummary} disabled={savingGM}
             className="flex items-center gap-2 px-4 py-2 rounded-lg bg-amber-600 hover:bg-amber-500 disabled:opacity-50 text-sm font-medium text-white transition-colors"
           >
             <Save className="w-3.5 h-3.5" />
@@ -110,7 +131,15 @@ export function SessionSummarySection({ sessionId, currentUser, isGM }: Props) {
           </div>
           <p className="text-sm text-zinc-300 whitespace-pre-wrap">{summary.gm_summary}</p>
         </div>
-      ) : null}
+      ) : (
+        <div className="bg-zinc-900 border border-zinc-800 rounded-xl p-4">
+          <div className="flex items-center gap-2 mb-1">
+            <BookOpen className="w-4 h-4 text-zinc-600" />
+            <h3 className="text-sm font-semibold text-zinc-500">Session-Zusammenfassung</h3>
+          </div>
+          <p className="text-xs text-zinc-600">Der GM hat noch keine Zusammenfassung geschrieben.</p>
+        </div>
+      )}
 
       {/* Spieler-Feedback */}
       <div className="bg-zinc-900 border border-zinc-800 rounded-xl p-4 space-y-3">
@@ -122,8 +151,7 @@ export function SessionSummarySection({ sessionId, currentUser, isGM }: Props) {
         <div>
           <label className="block text-xs font-medium text-zinc-400 mb-1">Kurzes Feedback (1–2 Sätze)</label>
           <textarea
-            rows={2}
-            value={myFeedback.feedback_text}
+            rows={2} value={myFeedback.feedback_text}
             onChange={(e) => setMyFeedback((p) => ({ ...p, feedback_text: e.target.value }))}
             placeholder="Wie war die Session für dich?"
             className="w-full bg-zinc-800 border border-zinc-700 rounded-lg px-3 py-2 text-sm text-zinc-100 placeholder-zinc-500 focus:outline-none focus:border-amber-500 resize-none"
@@ -136,8 +164,7 @@ export function SessionSummarySection({ sessionId, currentUser, isGM }: Props) {
               <ThumbsUp className="w-3.5 h-3.5" /> Was hat deinem Charakter gefallen?
             </label>
             <input
-              type="text"
-              value={myFeedback.character_liked}
+              type="text" value={myFeedback.character_liked}
               onChange={(e) => setMyFeedback((p) => ({ ...p, character_liked: e.target.value }))}
               placeholder="z.B. der Kampf mit dem Drachen"
               className="w-full bg-zinc-800 border border-zinc-700 rounded-lg px-3 py-2 text-sm text-zinc-100 placeholder-zinc-500 focus:outline-none focus:border-green-500"
@@ -145,11 +172,10 @@ export function SessionSummarySection({ sessionId, currentUser, isGM }: Props) {
           </div>
           <div>
             <label className="flex items-center gap-1.5 text-xs font-medium text-red-400 mb-1">
-              <ThumbsDown className="w-3.5 h-3.5" /> Was hat deinem Charakter gar nicht gefallen?
+              <ThumbsDown className="w-3.5 h-3.5" /> Was hat deinem Charakter nicht gefallen?
             </label>
             <input
-              type="text"
-              value={myFeedback.character_disliked}
+              type="text" value={myFeedback.character_disliked}
               onChange={(e) => setMyFeedback((p) => ({ ...p, character_disliked: e.target.value }))}
               placeholder="z.B. der Verrat des NPCs"
               className="w-full bg-zinc-800 border border-zinc-700 rounded-lg px-3 py-2 text-sm text-zinc-100 placeholder-zinc-500 focus:outline-none focus:border-red-500"
@@ -158,8 +184,7 @@ export function SessionSummarySection({ sessionId, currentUser, isGM }: Props) {
         </div>
 
         <button
-          onClick={savePlayerFeedback}
-          disabled={savingFeedback}
+          onClick={savePlayerFeedback} disabled={savingFeedback}
           className="flex items-center gap-2 px-4 py-2 rounded-lg bg-zinc-700 hover:bg-zinc-600 disabled:opacity-50 text-sm font-medium text-zinc-200 transition-colors"
         >
           <Save className="w-3.5 h-3.5" />
@@ -167,7 +192,7 @@ export function SessionSummarySection({ sessionId, currentUser, isGM }: Props) {
         </button>
       </div>
 
-      {/* Alle Feedbacks anzeigen (für alle sichtbar) */}
+      {/* Alle Feedbacks */}
       {feedbacks.length > 0 && (
         <div className="bg-zinc-900 border border-zinc-800 rounded-xl overflow-hidden">
           <button
@@ -184,12 +209,8 @@ export function SessionSummarySection({ sessionId, currentUser, isGM }: Props) {
                   <p className="text-xs font-semibold text-amber-400">{(f.user as any)?.username ?? '?'}</p>
                   {f.feedback_text && <p className="text-sm text-zinc-300">{f.feedback_text}</p>}
                   <div className="flex gap-4 text-xs">
-                    {f.character_liked && (
-                      <span className="text-green-400">✓ {f.character_liked}</span>
-                    )}
-                    {f.character_disliked && (
-                      <span className="text-red-400">✗ {f.character_disliked}</span>
-                    )}
+                    {f.character_liked && <span className="text-green-400">✓ {f.character_liked}</span>}
+                    {f.character_disliked && <span className="text-red-400">✗ {f.character_disliked}</span>}
                   </div>
                 </div>
               ))}
