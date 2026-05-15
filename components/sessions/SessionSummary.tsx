@@ -1,7 +1,7 @@
 'use client'
 
 import { useState, useEffect } from 'react'
-import { BookOpen, Save, ChevronDown, ChevronUp, SmilePlus, SmileMinus, MessageSquare } from 'lucide-react'
+import { BookOpen, Save, ChevronDown, ChevronUp, ThumbsUp, ThumbsDown, MessageSquare } from 'lucide-react'
 import { createClient } from '@/lib/supabase/client'
 import type { User, SessionSummary, SessionPlayerFeedback } from '@/types'
 
@@ -133,7 +133,7 @@ export function SessionSummarySection({ sessionId, currentUser, isGM }: Props) {
         <div className="grid grid-cols-2 gap-3">
           <div>
             <label className="flex items-center gap-1.5 text-xs font-medium text-green-400 mb-1">
-              <SmilePlus className="w-3.5 h-3.5" /> Was hat deinem Charakter gefallen?
+              <ThumbsUp className="w-3.5 h-3.5" /> Was hat deinem Charakter gefallen?
             </label>
             <input
               type="text"
@@ -145,7 +145,7 @@ export function SessionSummarySection({ sessionId, currentUser, isGM }: Props) {
           </div>
           <div>
             <label className="flex items-center gap-1.5 text-xs font-medium text-red-400 mb-1">
-              <SmileMinus className="w-3.5 h-3.5" /> Was hat deinem Charakter gar nicht gefallen?
+              <ThumbsDown className="w-3.5 h-3.5" /> Was hat deinem Charakter gar nicht gefallen?
             </label>
             <input
               type="text"
