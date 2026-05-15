@@ -216,18 +216,23 @@ export default function DicePage() {
           {lastResult.sumDice ? (
             <>
               <p className="text-xs text-zinc-500">{formatResults(config, lastResult.results)}</p>
-              <div className="flex items-baseline gap-2 flex-wrap">
-                <span className="text-4xl font-black text-amber-400">{lastResult.total}</span>
-                <span className="text-sm text-zinc-500">
-                  Gesamt ({formatConfig(config)}
-                  {lastResult.modifier !== 0 && (
-                    <span className={lastResult.modifier > 0 ? 'text-green-400' : 'text-red-400'}>
-                      {lastResult.modifier > 0 ? ` +${lastResult.modifier}` : ` ${lastResult.modifier}`}
-                    </span>
-                  )}
-                  )
-                </span>
-              </div>
+              {lastResult.modifier !== 0 ? (
+                /* Show as formula: diceSum + modifier = total */
+                <div className="flex items-baseline gap-2 flex-wrap">
+                  <span className="text-3xl font-black text-zinc-300">{lastResult.total - lastResult.modifier}</span>
+                  <span className={`text-2xl font-bold ${lastResult.modifier > 0 ? 'text-green-400' : 'text-red-400'}`}>
+                    {lastResult.modifier > 0 ? `+ ${lastResult.modifier}` : `− ${Math.abs(lastResult.modifier)}`}
+                  </span>
+                  <span className="text-xl text-zinc-500">=</span>
+                  <span className="text-4xl font-black text-amber-400">{lastResult.total}</span>
+                  <span className="text-sm text-zinc-500">({formatConfig(config)})</span>
+                </div>
+              ) : (
+                <div className="flex items-baseline gap-2 flex-wrap">
+                  <span className="text-4xl font-black text-amber-400">{lastResult.total}</span>
+                  <span className="text-sm text-zinc-500">Gesamt ({formatConfig(config)})</span>
+                </div>
+              )}
             </>
           ) : (
             <>
