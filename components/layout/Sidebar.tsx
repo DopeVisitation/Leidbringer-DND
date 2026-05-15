@@ -14,6 +14,8 @@ import {
   Map,
   MapPin,
   Settings,
+  Image as ImageIcon,
+  BookText,
 } from 'lucide-react'
 import { cn } from '@/lib/utils'
 import { useAuth } from '@/lib/hooks/useAuth'
@@ -21,10 +23,12 @@ import { useAuth } from '@/lib/hooks/useAuth'
 const navItems = [
   { href: '/dashboard', label: 'Übersicht', icon: Shield },
   { href: '/sessions', label: 'Sessions', icon: CalendarDays },
+  { href: '/summaries', label: 'Zusammenfassungen', icon: BookText },
   { href: '/quests', label: 'Quests', icon: Map },
   { href: '/maps', label: 'Karte', icon: MapPin },
   { href: '/dice', label: 'Würfelwürfe', icon: Dices },
   { href: '/loot', label: 'Loot', icon: Backpack },
+  { href: '/gallery', label: 'Bilder', icon: ImageIcon },
   { href: '/notes', label: 'Notizen', icon: ScrollText },
   { href: '/characters', label: 'Charaktere', icon: Sword },
   { href: '/rules', label: 'Grundregeln', icon: BookOpen },

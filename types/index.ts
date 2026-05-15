@@ -100,6 +100,50 @@ export interface CharacterLink {
   level: number
   created_at: string
   updated_at: string
+  full_data?: CharacterFullData | null
+}
+
+export interface CharacterFullData {
+  character_name: string
+  class_name: string
+  level: number
+  race: string
+  background: string
+  alignment: string
+  avatar_url: string | null
+  stats: Record<string, number>
+  max_hp: number
+  armor_class: number
+  proficiency_bonus: number
+  speed: number
+  initiative: number
+  inspiration: boolean
+  skills: Array<{
+    key: string
+    name: string
+    nameDe: string
+    ability: string
+    proficient: boolean
+    expertise: boolean
+    halfProficient: boolean
+    bonus: number
+  }>
+  saves: Array<{ ability: string; proficient: boolean; bonus: number }>
+  armor: Array<{ name: string; type: string; armorClass: number | null; equipped: boolean }>
+  weapons: Array<{
+    name: string
+    damage: string
+    damageType: string
+    properties: string[]
+    attackBonus: number
+    damageBonus: number
+    range: number | null
+    longRange: number | null
+    equipped: boolean
+  }>
+  tools: string[]
+  languages: string[]
+  spells: Array<{ name: string; level: number; school: string }>
 }
 
 export interface DiceConfig {

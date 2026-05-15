@@ -2,15 +2,15 @@
 
 import Link from 'next/link'
 import { usePathname } from 'next/navigation'
-import { CalendarDays, Shield, Dices, Map, MapPin } from 'lucide-react'
+import { CalendarDays, Shield, Dices, MapPin, Image as ImageIcon } from 'lucide-react'
 import { cn } from '@/lib/utils'
 
 const navItems = [
   { href: '/dashboard', label: 'Home',     icon: Shield       },
   { href: '/sessions',  label: 'Sessions', icon: CalendarDays },
   { href: '/maps',      label: 'Karte',    icon: MapPin       },
-  { href: '/quests',    label: 'Quests',   icon: Map          },
   { href: '/dice',      label: 'Würfel',   icon: Dices        },
+  { href: '/gallery',   label: 'Bilder',   icon: ImageIcon    },
 ]
 
 export function MobileNav() {

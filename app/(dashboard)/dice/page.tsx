@@ -1,10 +1,10 @@
 'use client'
 
-import { useState, useEffect, useRef } from 'react'
-import { Dices, Plus, Minus, Trash2, RotateCw } from 'lucide-react'
+import { useState, useEffect, useRef, useCallback } from 'react'
+import { Dices, Plus, Minus, Trash2, RotateCw, Sword, Shield, Sparkles, Star, Zap, ChevronDown, ChevronRight } from 'lucide-react'
 import { createClient } from '@/lib/supabase/client'
 import { useAuth } from '@/lib/hooks/useAuth'
-import type { DiceRoll, DiceConfig } from '@/types'
+import type { DiceRoll, DiceConfig, CharacterLink, CharacterFullData } from '@/types'
 
 const DICE_TYPES = ['d4', 'd6', 'd8', 'd10', 'd12', 'd20', 'd100']
 
@@ -23,10 +23,10 @@ interface DamageType {
   id: string
   label: string
   icon: string
-  color: string       // text-* tailwind utility
-  bg: string          // bg-* tailwind utility (semi-transparent)
-  border: string      // border-* tailwind utility
-  hex: string         // raw hex (used for inline styles)
+  color: string
+  bg: string
+  border: string
+  hex: string
 }
 
 const DAMAGE_TYPES: DamageType[] = [
@@ -63,6 +63,42 @@ function parseSides(type: string): number {
   return parseInt(type.slice(1))
 }
 
+function fmtBonus(n: number): string { return n >= 0 ? `+${n}` : `${n}` }
+function statMod(val: number): number { return Math.floor((val - 10) / 2) }
+
+const STATS = ['STR', 'DEX', 'CON', 'INT', 'WIS', 'CHA']
+const STAT_LABELS: Record<string, string> = {
+  STR: 'Stärke', DEX: 'Geschicklichkeit', CON: 'Konstitution',
+  INT: 'Intelligenz', WIS: 'Weisheit', CHA: 'Charisma',
+}
+
+// Map ability-id like "1d6" / "2d8" → DiceConfig[]
+function parseDamageDice(diceString: string): DiceConfig[] {
+  // matches "1d6", "2d8 + 1d4" etc. — schlicht ohne static modifiers
+  const re = /(\d+)d(\d+)/gi
+  const out: DiceConfig[] = []
+  let m: RegExpExecArray | null
+  while ((m = re.exec(diceString)) !== null) {
+    const count = parseInt(m[1])
+    const sides = parseInt(m[2])
+    out.push({ type: `d${sides}`, count })
+  }
+  return out
+}
+
+// Map a DnD damage type string to a DamageType ID
+function damageIdFromText(s: string | null | undefined): string | undefined {
+  if (!s) return undefined
+  const t = s.toLowerCase()
+  const map: Record<string, string> = {
+    fire: 'fire', cold: 'cold', lightning: 'lightning', thunder: 'thunder',
+    acid: 'acid', poison: 'poison', necrotic: 'necrotic', radiant: 'radiant',
+    psychic: 'psychic', force: 'force', slashing: 'slashing',
+    piercing: 'piercing', bludgeoning: 'bludgeoning',
+  }
+  return map[t]
+}
+
 export default function DicePage() {
   const supabase = createClient()
   const { user } = useAuth()
@@ -70,10 +106,12 @@ export default function DicePage() {
   const [label, setLabel] = useState('')
   const [modifier, setModifier] = useState<number>(0)
   const [sumDice, setSumDice] = useState(true)
-  const [currentDamage, setCurrentDamage] = useState<string | null>(null)   // null = Neutral
+  const [currentDamage, setCurrentDamage] = useState<string | null>(null)
   const [rolls, setRolls] = useState<DiceRoll[]>([])
   const [rolling, setRolling] = useState(false)
   const [lastResult, setLastResult] = useState<{ config: DiceConfig[]; results: number[][]; total: number; modifier: number; sumDice: boolean } | null>(null)
+  const [character, setCharacter] = useState<CharacterLink | null>(null)
+  const [openSections, setOpenSections] = useState({ checks: true, saves: true, skills: false, attacks: true })
   const logRef = useRef<HTMLDivElement>(null)
 
   useEffect(() => {
@@ -83,7 +121,18 @@ export default function DicePage() {
       .on('postgres_changes', { event: 'INSERT', schema: 'public', table: 'dice_rolls' }, () => loadRolls())
       .subscribe()
     return () => { supabase.removeChannel(channel) }
+  // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [])
+
+  useEffect(() => {
+    if (!user) return
+    supabase
+      .from('character_links')
+      .select('*')
+      .eq('user_id', user.id)
+      .maybeSingle()
+      .then(({ data }) => { if (data) setCharacter(data as CharacterLink) })
+  }, [user, supabase])
 
   const loadRolls = async () => {
     const { data } = await supabase
@@ -94,7 +143,6 @@ export default function DicePage() {
     if (data) setRolls(data as DiceRoll[])
   }
 
-  // Adjust count for (type, currentDamage). One config entry per (type, damageType) pair.
   const adjustCount = (type: string, delta: number) => {
     setConfig((prev) => {
       const dmg = currentDamage ?? undefined
@@ -118,10 +166,8 @@ export default function DicePage() {
     setConfig((prev) => prev.filter((c) => !(c.type === entry.type && (c.damageType ?? undefined) === (entry.damageType ?? undefined))))
   }
 
-  const getCount = (type: string) => {
-    // Total count for this die type across ALL damage types — used to highlight + show selected
-    return config.filter((c) => c.type === type).reduce((s, c) => s + c.count, 0)
-  }
+  const getCount = (type: string) =>
+    config.filter((c) => c.type === type).reduce((s, c) => s + c.count, 0)
   const getCountForCurrent = (type: string) => {
     const dmg = currentDamage ?? undefined
     return config.find((c) => c.type === type && (c.damageType ?? undefined) === dmg)?.count ?? 0
@@ -129,27 +175,44 @@ export default function DicePage() {
 
   const totalDice = config.reduce((s, c) => s + c.count, 0)
 
-  const handleRoll = async () => {
-    if (totalDice === 0 || !user) return
+  // ── Wurf-Logik ────────────────────────────────────────────────────────────
+  const performRoll = useCallback(async (cfg: DiceConfig[], mod: number, lbl: string) => {
+    if (!user || cfg.length === 0) return
     setRolling(true)
-
-    const results = config.map((c) =>
+    const results = cfg.map((c) =>
       Array.from({ length: c.count }, () => rollDie(parseSides(c.type)))
     )
     const diceSum = results.flat().reduce((s, n) => s + n, 0)
-    const total = diceSum + modifier
-    setLastResult({ config: [...config], results, total, modifier, sumDice })
+    const total = diceSum + mod
+    setLastResult({ config: [...cfg], results, total, modifier: mod, sumDice: true })
 
     await supabase.from('dice_rolls').insert({
       user_id: user.id,
-      dice_config: config,
+      dice_config: cfg,
       results,
       total,
-      label: label.trim() || null,
+      label: lbl || null,
     })
-
     setRolling(false)
     setTimeout(() => logRef.current?.scrollTo({ top: 0, behavior: 'smooth' }), 100)
+  }, [user, supabase])
+
+  const handleRoll = async () => {
+    if (totalDice === 0) return
+    await performRoll(config, modifier, label.trim())
+  }
+
+  // Quick-Roll: 1d20 + bonus mit Label
+  const quickD20 = (bonus: number, label: string) =>
+    performRoll([{ type: 'd20', count: 1 }], bonus, label)
+
+  // Quick-Roll: Weapon Damage
+  const quickDamage = (diceStr: string, bonus: number, damageType: string | undefined, label: string) => {
+    const cfg = parseDamageDice(diceStr)
+    if (cfg.length === 0) return
+    const dmgId = damageIdFromText(damageType)
+    if (dmgId) cfg.forEach((c) => { c.damageType = dmgId })
+    return performRoll(cfg, bonus, label)
   }
 
   const formatConfigLabel = (cfg: DiceConfig[]) =>
@@ -158,12 +221,174 @@ export default function DicePage() {
       return d ? `${c.count}x ${c.type} ${d.icon}` : `${c.count}x ${c.type}`
     }).join(' + ')
 
+  const d = character?.full_data ?? null
+  const initiative = d?.initiative ?? 0
+
   return (
     <div className="p-4 md:p-6 max-w-3xl mx-auto space-y-6">
       <div className="flex items-center gap-3">
         <Dices className="w-6 h-6 text-amber-400" />
         <h1 className="text-xl font-bold text-zinc-100">Würfelwürfe</h1>
       </div>
+
+      {/* ── Schnellwürfe aus Charakter ──────────────────────────────────── */}
+      {d && (
+        <div className="bg-gradient-to-br from-[#1a0a02] to-[#0f0600] border border-[#8b2a0a]/60 rounded-xl p-4 space-y-3">
+          <div className="flex items-center gap-2">
+            <Sparkles className="w-4 h-4 text-[#c84b11]" />
+            <p className="text-sm font-bold text-[#f5deb3]">Schnellwürfe — {character?.character_name}</p>
+            <span className="text-xs text-[#a0785a] ml-auto">{character?.class_name}</span>
+          </div>
+
+          {/* Initiative + Death Save */}
+          <div className="flex flex-wrap gap-1.5">
+            <button
+              onClick={() => quickD20(initiative, `Initiative ${fmtBonus(initiative)}`)}
+              className="flex items-center gap-1.5 px-3 py-1.5 rounded-lg bg-[#3a0d00]/60 border border-amber-500/40 text-xs font-bold text-amber-300 hover:bg-[#3a0d00] transition-colors"
+            >
+              <Zap className="w-3.5 h-3.5" /> Initiative {fmtBonus(initiative)}
+            </button>
+            <button
+              onClick={() => quickD20(0, 'Rettungswurf vs. Tod')}
+              className="flex items-center gap-1.5 px-3 py-1.5 rounded-lg bg-[#3a0d00]/60 border border-zinc-500/40 text-xs font-bold text-zinc-300 hover:bg-[#3a0d00] transition-colors"
+            >
+              💀 Todeswurf
+            </button>
+            <button
+              onClick={() => quickD20(0, 'Glücks-d20')}
+              className="flex items-center gap-1.5 px-3 py-1.5 rounded-lg bg-[#3a0d00]/60 border border-zinc-500/40 text-xs font-bold text-zinc-300 hover:bg-[#3a0d00] transition-colors"
+            >
+              🎲 d20 pur
+            </button>
+          </div>
+
+          {/* Ability Checks */}
+          <CollapsibleSection
+            title="Eigenschaftsproben (1d20 + Mod)"
+            open={openSections.checks}
+            onToggle={() => setOpenSections((s) => ({ ...s, checks: !s.checks }))}
+            icon={<Star className="w-3.5 h-3.5" />}
+          >
+            <div className="grid grid-cols-3 md:grid-cols-6 gap-1.5">
+              {STATS.map((s) => {
+                const mod = statMod(d.stats[s] ?? 10)
+                return (
+                  <button
+                    key={s}
+                    onClick={() => quickD20(mod, `${STAT_LABELS[s]} ${fmtBonus(mod)}`)}
+                    className="flex flex-col items-center py-1.5 rounded-lg bg-[#1a0a02] border border-[#8b2a0a]/40 hover:border-amber-500/60 transition-colors group"
+                  >
+                    <span className="text-[10px] text-[#a0785a] uppercase font-semibold">{s}</span>
+                    <span className="text-sm font-bold text-[#f5deb3]">{fmtBonus(mod)}</span>
+                  </button>
+                )
+              })}
+            </div>
+          </CollapsibleSection>
+
+          {/* Saving Throws */}
+          <CollapsibleSection
+            title="Rettungswürfe"
+            open={openSections.saves}
+            onToggle={() => setOpenSections((s) => ({ ...s, saves: !s.saves }))}
+            icon={<Shield className="w-3.5 h-3.5" />}
+          >
+            <div className="grid grid-cols-3 md:grid-cols-6 gap-1.5">
+              {d.saves.map((s) => (
+                <button
+                  key={s.ability}
+                  onClick={() => quickD20(s.bonus, `${STAT_LABELS[s.ability]}-Rettung ${fmtBonus(s.bonus)}`)}
+                  className={`flex flex-col items-center py-1.5 rounded-lg border transition-colors ${
+                    s.proficient
+                      ? 'bg-[#3a0d00]/40 border-[#c84b11]/60 hover:border-amber-400'
+                      : 'bg-[#1a0a02] border-[#8b2a0a]/40 hover:border-amber-500/60'
+                  }`}
+                >
+                  {s.proficient && <span className="text-[8px] text-amber-400">●</span>}
+                  <span className="text-[10px] text-[#a0785a] uppercase font-semibold">{s.ability}</span>
+                  <span className="text-sm font-bold text-[#f5deb3]">{fmtBonus(s.bonus)}</span>
+                </button>
+              ))}
+            </div>
+          </CollapsibleSection>
+
+          {/* Skills */}
+          <CollapsibleSection
+            title={`Fertigkeiten (${d.skills.filter((s) => s.proficient || s.expertise).length} geübt)`}
+            open={openSections.skills}
+            onToggle={() => setOpenSections((s) => ({ ...s, skills: !s.skills }))}
+            icon={<Star className="w-3.5 h-3.5" />}
+          >
+            <div className="grid grid-cols-2 md:grid-cols-3 gap-1.5">
+              {[...d.skills].sort((a, b) => Number(b.proficient || b.expertise) - Number(a.proficient || a.expertise) || b.bonus - a.bonus).map((s) => (
+                <button
+                  key={s.key}
+                  onClick={() => quickD20(s.bonus, `${s.nameDe} ${fmtBonus(s.bonus)}`)}
+                  className={`flex items-center gap-1.5 px-2 py-1 rounded-lg border text-xs transition-colors text-left ${
+                    s.expertise
+                      ? 'bg-amber-900/30 border-amber-500/60 hover:border-amber-400'
+                      : s.proficient
+                        ? 'bg-[#3a0d00]/40 border-[#c84b11]/60 hover:border-amber-400'
+                        : 'bg-[#1a0a02] border-[#8b2a0a]/40 hover:border-amber-500/60'
+                  }`}
+                >
+                  <span
+                    className={`w-2 h-2 rounded-full flex-shrink-0 ${
+                      s.expertise ? 'bg-amber-400 ring-1 ring-amber-300'
+                        : s.proficient ? 'bg-[#c84b11]'
+                          : s.halfProficient ? 'bg-[#c84b11]/40'
+                            : 'bg-zinc-700'
+                    }`}
+                  />
+                  <span className="text-[10px] text-[#a0785a] w-7">{s.ability}</span>
+                  <span className="text-[#f5deb3] flex-1 truncate">{s.nameDe}</span>
+                  <span className="font-bold text-[#f5deb3] tabular-nums">{fmtBonus(s.bonus)}</span>
+                </button>
+              ))}
+            </div>
+          </CollapsibleSection>
+
+          {/* Weapons */}
+          {d.weapons.length > 0 && (
+            <CollapsibleSection
+              title="Angriffe & Schaden"
+              open={openSections.attacks}
+              onToggle={() => setOpenSections((s) => ({ ...s, attacks: !s.attacks }))}
+              icon={<Sword className="w-3.5 h-3.5" />}
+            >
+              <div className="space-y-1.5">
+                {d.weapons.map((w, i) => (
+                  <div
+                    key={i}
+                    className={`flex flex-wrap items-center gap-1.5 px-2 py-1.5 rounded-lg border ${
+                      w.equipped ? 'bg-[#3a0d00]/40 border-[#c84b11]/60' : 'bg-[#1a0a02] border-[#8b2a0a]/40 opacity-70'
+                    }`}
+                  >
+                    {w.equipped && <span className="text-amber-400">●</span>}
+                    <span className="text-xs font-semibold text-[#f5deb3] flex-1 min-w-0 truncate">{w.name}</span>
+                    <button
+                      onClick={() => quickD20(w.attackBonus, `${w.name} Angriff ${fmtBonus(w.attackBonus)}`)}
+                      className="flex items-center gap-1 px-2 py-1 rounded bg-amber-600/30 hover:bg-amber-600/60 border border-amber-500/60 text-[11px] font-bold text-amber-200 transition-colors"
+                      title="1d20 + Angriffsbonus"
+                    >
+                      Atk {fmtBonus(w.attackBonus)}
+                    </button>
+                    {w.damage && (
+                      <button
+                        onClick={() => quickDamage(w.damage, w.damageBonus, w.damageType, `${w.name} Schaden ${w.damage}${w.damageBonus !== 0 ? fmtBonus(w.damageBonus) : ''}`)}
+                        className="flex items-center gap-1 px-2 py-1 rounded bg-red-700/30 hover:bg-red-700/60 border border-red-500/60 text-[11px] font-bold text-red-200 transition-colors"
+                        title={`Schaden: ${w.damage}${w.damageBonus !== 0 ? fmtBonus(w.damageBonus) : ''} ${w.damageType}`}
+                      >
+                        Dmg {w.damage}{w.damageBonus !== 0 ? fmtBonus(w.damageBonus) : ''}
+                      </button>
+                    )}
+                  </div>
+                ))}
+              </div>
+            </CollapsibleSection>
+          )}
+        </div>
+      )}
 
       {/* Schadensart-Auswahl */}
       <div className="bg-zinc-900 border border-zinc-800 rounded-xl p-4 space-y-3">
@@ -192,19 +417,19 @@ export default function DicePage() {
           >
             <span className="text-base leading-none">⚪</span> Neutral
           </button>
-          {DAMAGE_TYPES.map((d) => (
+          {DAMAGE_TYPES.map((dt) => (
             <button
-              key={d.id}
-              onClick={() => setCurrentDamage(d.id)}
+              key={dt.id}
+              onClick={() => setCurrentDamage(dt.id)}
               className={`flex items-center gap-1.5 px-2.5 py-1.5 rounded-lg text-xs font-medium border transition-all ${
-                currentDamage === d.id
-                  ? `${d.bg} ${d.border} ${d.color} shadow-md ring-1 ring-current/30`
+                currentDamage === dt.id
+                  ? `${dt.bg} ${dt.border} ${dt.color} shadow-md ring-1 ring-current/30`
                   : 'bg-zinc-800/60 border-zinc-700 text-zinc-400 hover:text-zinc-200 hover:border-zinc-600'
               }`}
-              title={d.label}
+              title={dt.label}
             >
-              <span className="text-base leading-none">{d.icon}</span>
-              {d.label}
+              <span className="text-base leading-none">{dt.icon}</span>
+              {dt.label}
             </button>
           ))}
         </div>
@@ -215,10 +440,10 @@ export default function DicePage() {
         <div className="flex items-center justify-between">
           <p className="text-sm font-medium text-zinc-300">Würfel auswählen</p>
           {currentDamage && (() => {
-            const d = damageOf(currentDamage)!
+            const dt = damageOf(currentDamage)!
             return (
-              <span className={`text-xs font-semibold flex items-center gap-1 ${d.color}`}>
-                <span>{d.icon}</span> {d.label} aktiv
+              <span className={`text-xs font-semibold flex items-center gap-1 ${dt.color}`}>
+                <span>{dt.icon}</span> {dt.label} aktiv
               </span>
             )
           })()}
@@ -227,7 +452,7 @@ export default function DicePage() {
           {DICE_TYPES.map((type) => {
             const totalCount = getCount(type)
             const currentCount = getCountForCurrent(type)
-            const d = damageOf(currentDamage)
+            const dt = damageOf(currentDamage)
             return (
               <div key={type} className="flex flex-col items-center gap-1.5">
                 <button
@@ -235,20 +460,19 @@ export default function DicePage() {
                   onClick={() => adjustCount(type, 1)}
                   className={`relative w-14 h-14 rounded-xl border-2 font-bold text-sm transition-all ${
                     totalCount > 0
-                      ? d
-                        ? `${d.bg} ${d.border} ${d.color}`
+                      ? dt
+                        ? `${dt.bg} ${dt.border} ${dt.color}`
                         : 'bg-amber-600/20 border-amber-500 text-amber-300'
                       : 'bg-zinc-800 border-zinc-700 text-zinc-400 hover:border-zinc-500'
                   }`}
                 >
                   {type}
-                  {/* Aktiver Schadensart-Indikator unten rechts */}
-                  {d && currentCount > 0 && (
+                  {dt && currentCount > 0 && (
                     <span
                       className="absolute -bottom-1 -right-1 w-5 h-5 rounded-full bg-zinc-900 border border-zinc-700 text-[11px] leading-none flex items-center justify-center shadow"
-                      title={d.label}
+                      title={dt.label}
                     >
-                      {d.icon}
+                      {dt.icon}
                     </span>
                   )}
                 </button>
@@ -257,7 +481,7 @@ export default function DicePage() {
                     <button onClick={() => adjustCount(type, -1)} className="p-0.5 text-zinc-500 hover:text-zinc-300">
                       <Minus className="w-3 h-3" />
                     </button>
-                    <span className={`text-xs font-bold min-w-[1.25rem] text-center ${d ? d.color : DICE_COLORS[type]}`}>
+                    <span className={`text-xs font-bold min-w-[1.25rem] text-center ${dt ? dt.color : DICE_COLORS[type]}`}>
                       {currentCount}
                     </span>
                     <button onClick={() => adjustCount(type, 1)} className="p-0.5 text-zinc-500 hover:text-zinc-300">
@@ -265,7 +489,6 @@ export default function DicePage() {
                     </button>
                   </div>
                 )}
-                {/* Wenn dieser Würfeltyp auch in anderen Schadensarten existiert, kleines Hint */}
                 {totalCount > currentCount && (
                   <span className="text-[10px] text-zinc-600">+{totalCount - currentCount} andere</span>
                 )}
@@ -274,22 +497,21 @@ export default function DicePage() {
           })}
         </div>
 
-        {/* Liste aller Konfigurationen */}
         {config.length > 0 && (
           <div className="flex flex-wrap items-center gap-2 pt-2 border-t border-zinc-800">
             <span className="text-sm text-zinc-400 w-full mb-1">Ausgewählt:</span>
             {config.map((c, i) => {
-              const d = damageOf(c.damageType)
+              const dt = damageOf(c.damageType)
               return (
                 <span
                   key={`${c.type}-${c.damageType ?? 'n'}-${i}`}
                   className={`group flex items-center gap-1.5 text-sm font-semibold pl-2 pr-1 py-0.5 rounded-md border ${
-                    d ? `${d.bg} ${d.border} ${d.color}` : `bg-zinc-800 border-zinc-700 ${DICE_COLORS[c.type]}`
+                    dt ? `${dt.bg} ${dt.border} ${dt.color}` : `bg-zinc-800 border-zinc-700 ${DICE_COLORS[c.type]}`
                   }`}
                 >
-                  {d && <span className="text-sm leading-none">{d.icon}</span>}
+                  {dt && <span className="text-sm leading-none">{dt.icon}</span>}
                   {c.count}x {c.type}
-                  {d && <span className="text-[10px] opacity-70 -ml-0.5">{d.label}</span>}
+                  {dt && <span className="text-[10px] opacity-70 -ml-0.5">{dt.label}</span>}
                   <button
                     onClick={() => removeEntry(c)}
                     className="ml-1 opacity-0 group-hover:opacity-100 text-zinc-500 hover:text-red-400 transition-opacity"
@@ -309,7 +531,6 @@ export default function DicePage() {
           </div>
         )}
 
-        {/* Optionen: Modifier + Addieren-Toggle */}
         <div className="flex flex-wrap gap-3 items-end">
           <div className="flex flex-col gap-1">
             <label className="text-xs text-zinc-500 font-medium">Modifier</label>
@@ -362,37 +583,36 @@ export default function DicePage() {
         <div className="bg-zinc-900 border border-amber-600/40 rounded-xl p-4 space-y-3">
           <p className="text-xs font-medium text-amber-400/70 uppercase tracking-wide">Letzter Wurf</p>
 
-          {/* Aufschlüsselung pro Eintrag (immer sichtbar, da bei Schadensarten essentiell) */}
           <div className="space-y-1.5">
             {lastResult.config.map((c, i) => {
-              const d = damageOf(c.damageType)
+              const dt = damageOf(c.damageType)
               const values = lastResult.results[i] ?? []
               const sum = values.reduce((s, n) => s + n, 0)
               return (
                 <div
                   key={`${c.type}-${c.damageType ?? 'n'}-${i}`}
                   className={`flex flex-wrap items-center gap-2 px-3 py-2 rounded-lg border ${
-                    d ? `${d.bg} ${d.border}` : 'bg-zinc-800/40 border-zinc-700'
+                    dt ? `${dt.bg} ${dt.border}` : 'bg-zinc-800/40 border-zinc-700'
                   }`}
                 >
-                  <span className="text-xl leading-none">{d ? d.icon : '🎲'}</span>
-                  <span className={`text-sm font-bold ${d ? d.color : DICE_COLORS[c.type]}`}>
+                  <span className="text-xl leading-none">{dt ? dt.icon : '🎲'}</span>
+                  <span className={`text-sm font-bold ${dt ? dt.color : DICE_COLORS[c.type]}`}>
                     {c.count}x {c.type}
-                    {d && <span className="text-zinc-400 font-normal ml-1.5">{d.label}</span>}
+                    {dt && <span className="text-zinc-400 font-normal ml-1.5">{dt.label}</span>}
                   </span>
                   <div className="flex flex-wrap gap-1 ml-1">
                     {values.map((v, vi) => (
                       <span
                         key={vi}
                         className={`min-w-[2rem] text-center px-1.5 py-0.5 rounded text-sm font-bold bg-zinc-900/80 border ${
-                          d ? d.border : 'border-zinc-700'
-                        } ${d ? d.color : DICE_COLORS[c.type]}`}
+                          dt ? dt.border : 'border-zinc-700'
+                        } ${dt ? dt.color : DICE_COLORS[c.type]}`}
                       >
                         {v}
                       </span>
                     ))}
                   </div>
-                  <span className={`ml-auto text-sm font-black ${d ? d.color : DICE_COLORS[c.type]}`}>
+                  <span className={`ml-auto text-sm font-black ${dt ? dt.color : DICE_COLORS[c.type]}`}>
                     Σ {sum}
                   </span>
                 </div>
@@ -400,7 +620,6 @@ export default function DicePage() {
             })}
           </div>
 
-          {/* Gesamt */}
           {lastResult.sumDice && (
             lastResult.modifier !== 0 ? (
               <div className="flex items-baseline gap-2 flex-wrap pt-1 border-t border-zinc-800">
@@ -443,16 +662,16 @@ export default function DicePage() {
                   </div>
                   <div className="flex flex-wrap gap-1 mt-1">
                     {roll.dice_config.map((c, i) => {
-                      const d = damageOf(c.damageType)
+                      const dt = damageOf(c.damageType)
                       const vals = (roll.results[i] ?? []).join(', ')
                       return (
                         <span
                           key={i}
                           className={`text-[11px] px-1.5 py-0.5 rounded border ${
-                            d ? `${d.bg} ${d.border} ${d.color}` : 'bg-zinc-800/50 border-zinc-700 text-zinc-400'
+                            dt ? `${dt.bg} ${dt.border} ${dt.color}` : 'bg-zinc-800/50 border-zinc-700 text-zinc-400'
                           }`}
                         >
-                          {d ? `${d.icon} ` : ''}{c.type}: [{vals}]
+                          {dt ? `${dt.icon} ` : ''}{c.type}: [{vals}]
                         </span>
                       )
                     })}
@@ -469,6 +688,31 @@ export default function DicePage() {
           )}
         </div>
       </div>
+    </div>
+  )
+}
+
+// ── Collapsible section helper ─────────────────────────────────────────────
+function CollapsibleSection({
+  title, open, onToggle, icon, children,
+}: {
+  title: string
+  open: boolean
+  onToggle: () => void
+  icon: React.ReactNode
+  children: React.ReactNode
+}) {
+  return (
+    <div className="border-t border-[#8b2a0a]/30 pt-2">
+      <button
+        onClick={onToggle}
+        className="flex items-center gap-1.5 w-full text-left mb-2 group"
+      >
+        {open ? <ChevronDown className="w-3.5 h-3.5 text-[#c84b11]" /> : <ChevronRight className="w-3.5 h-3.5 text-[#c84b11]" />}
+        {icon}
+        <span className="text-xs font-bold text-[#f5deb3] uppercase tracking-wide">{title}</span>
+      </button>
+      {open && <div>{children}</div>}
     </div>
   )
 }
