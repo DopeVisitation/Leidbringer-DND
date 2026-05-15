@@ -10,6 +10,7 @@ export function useNotes(userId: string) {
   const supabase = createClient()
 
   const fetchNotes = useCallback(async () => {
+    if (!userId) return
     const { data } = await supabase
       .from('notes')
       .select('*')
@@ -25,7 +26,8 @@ export function useNotes(userId: string) {
     fetchNotes()
   }, [fetchNotes])
 
-  const saveNote = async (note: Partial<Note>) => {
+  // Returns the saved note so the editor can update its state
+  const saveNote = async (note: Partial<Note>): Promise<Note | null> => {
     if (note.id) {
       const { data } = await supabase
         .from('notes')
@@ -33,14 +35,16 @@ export function useNotes(userId: string) {
         .eq('id', note.id)
         .select()
         .single()
-      setNotes((prev) => prev.map((n) => (n.id === note.id ? data : n)))
+      if (data) setNotes((prev) => prev.map((n) => (n.id === note.id ? data : n)))
+      return data
     } else {
       const { data } = await supabase
         .from('notes')
         .insert({ ...note, owner_id: userId })
         .select()
         .single()
-      setNotes((prev) => [data, ...prev])
+      if (data) setNotes((prev) => [data, ...prev])
+      return data
     }
   }
 
@@ -54,10 +58,14 @@ export function useNotes(userId: string) {
 
 export function usePrivateMessages(playerId: string, gmId: string) {
   const [messages, setMessages] = useState<GMPrivateMessage[]>([])
+  const [loading, setLoading] = useState(true)
   const supabase = createClient()
 
   useEffect(() => {
-    if (!playerId || !gmId) return
+    if (!playerId || !gmId) {
+      setLoading(false)
+      return
+    }
 
     const fetch = async () => {
       const { data } = await supabase
@@ -67,12 +75,13 @@ export function usePrivateMessages(playerId: string, gmId: string) {
         .order('created_at', { ascending: true })
 
       setMessages(data ?? [])
+      setLoading(false)
     }
 
     fetch()
 
     const channel = supabase
-      .channel(`private-${playerId}`)
+      .channel(`private-${playerId}-${gmId}`)
       .on('postgres_changes', {
         event: 'INSERT',
         schema: 'public',
@@ -87,6 +96,7 @@ export function usePrivateMessages(playerId: string, gmId: string) {
   }, [playerId, gmId])
 
   const sendMessage = async (message: string, senderRole: 'gm' | 'player') => {
+    if (!playerId || !gmId) return
     await supabase.from('gm_private_messages').insert({
       player_id: playerId,
       gm_id: gmId,
@@ -95,5 +105,5 @@ export function usePrivateMessages(playerId: string, gmId: string) {
     })
   }
 
-  return { messages, sendMessage }
+  return { messages, loading, sendMessage }
 }
