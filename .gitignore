@@ -26,3 +26,6 @@ yarn-error.log*
 .vercel
 
 .vercel
+
+# Local map-tiling helper output (used to read maps; not part of the app)
+map_tiles/

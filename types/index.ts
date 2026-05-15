@@ -105,6 +105,7 @@ export interface CharacterLink {
 export interface DiceConfig {
   type: string
   count: number
+  damageType?: string
 }
 
 export interface DiceRoll {
