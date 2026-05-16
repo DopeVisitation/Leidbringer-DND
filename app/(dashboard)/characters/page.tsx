@@ -629,7 +629,7 @@ function PlayerCharacterTabs({
 
   const tabs = [
     { id: 'schlitze', label: 'Zauberschlitze', icon: Sparkles },
-    ...(hasSpells ? [{ id: 'zauber', label: 'Zauberbuch', icon: BookOpen }] : []),
+    ...(hasSpells ? [{ id: 'zauber', label: 'Zauber', icon: BookOpen }] : []),
   ] as const
 
   return (
