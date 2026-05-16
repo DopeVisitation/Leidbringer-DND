@@ -1,10 +1,15 @@
 'use client'
 
 import { useState, useEffect } from 'react'
-import { Backpack, Plus, Trash2, X, User } from 'lucide-react'
+import { Backpack, Plus, Trash2, X, User, Dices } from 'lucide-react'
 import { createClient } from '@/lib/supabase/client'
 import { useAuth } from '@/lib/hooks/useAuth'
 import type { LootItem, LootRarity } from '@/types'
+import {
+  LOOT_TABLES, LOOT_CATEGORIES, LOOT_RARITY_LABELS,
+  rollD4, rollD100, getItemFromTable,
+  type LootRarityKey, type LootCategory,
+} from '@/lib/loot-tables'
 
 const RARITY_CONFIG: Record<LootRarity, { label: string; text: string; border: string; bg: string; glow: string }> = {
   common:    { label: 'Gewöhnlich',   text: 'text-zinc-300',   border: 'border-zinc-600',   bg: 'bg-zinc-800',        glow: '' },
@@ -14,6 +19,14 @@ const RARITY_CONFIG: Record<LootRarity, { label: string; text: string; border: s
   legendary: { label: 'Legendär',     text: 'text-amber-300',  border: 'border-amber-500',  bg: 'bg-amber-950/30',    glow: 'shadow-[0_0_16px_rgba(245,158,11,0.3)]' },
 }
 
+const RARITY_ROLL_COLORS: Record<LootRarityKey, string> = {
+  common:    'bg-zinc-700 text-zinc-200 border-zinc-600',
+  uncommon:  'bg-green-900/60 text-green-200 border-green-700',
+  rare:      'bg-blue-900/60 text-blue-200 border-blue-700',
+  very_rare: 'bg-purple-900/60 text-purple-200 border-purple-700',
+  legendary: 'bg-amber-900/60 text-amber-200 border-amber-600',
+}
+
 const LOOT_ICONS = [
   '📦','⚔️','🗡️','🏹','🪃','🔱','🛡️','🧤','🥾','🪖',
   '🔮','🪄','🧿','💫','⚡','🧪','🍶','💊','🫙',
@@ -21,7 +34,18 @@ const LOOT_ICONS = [
   '🗺️','🧲','🪬','🎁','🐉','💀','🌟','🔥','❄️','☠️',
 ]
 
+const CATEGORY_ICONS: Record<LootCategory, string> = {
+  Arcana: '🔮', Armaments: '⚔️', Implements: '🛠️', Relics: '✨',
+}
+
 type Tab = 'group' | 'personal'
+
+interface RollResult {
+  d4: number
+  category: LootCategory
+  d100: number
+  item: string | null
+}
 
 export default function LootPage() {
   const supabase = createClient()
@@ -37,6 +61,13 @@ export default function LootPage() {
   const [saving, setSaving] = useState(false)
   const [filterRarity, setFilterRarity] = useState<LootRarity | 'all'>('all')
   const [activeTab, setActiveTab] = useState<Tab>('group')
+
+  // Roll state
+  const [showRollPanel, setShowRollPanel] = useState(false)
+  const [rollRarity, setRollRarity] = useState<LootRarityKey>('common')
+  const [rollResult, setRollResult] = useState<RollResult | null>(null)
+  const [rolling, setRolling] = useState(false)
+  const [addingRoll, setAddingRoll] = useState(false)
 
   useEffect(() => {
     loadItems()
@@ -83,6 +114,42 @@ export default function LootPage() {
     await supabase.from('loot_items').update({ assigned_to: userId || null }).eq('id', id)
   }
 
+  // ── Loot Table Roll ───────────────────────────────────────────────────────
+  const handleRoll = () => {
+    setRolling(true)
+    setRollResult(null)
+    setTimeout(() => {
+      const d4 = rollD4()
+      const cat = LOOT_CATEGORIES.find((c) => c.d4 === d4)!
+      const d100 = rollD100()
+      const item = getItemFromTable(rollRarity, cat.key, d100)
+      setRollResult({ d4, category: cat.key, d100, item })
+      setRolling(false)
+    }, 400)
+  }
+
+  const handleAddRolled = async () => {
+    if (!rollResult?.item || !user) return
+    setAddingRoll(true)
+    const now = new Date()
+    const dateStr = now.toLocaleDateString('de-DE', { day: '2-digit', month: '2-digit', year: 'numeric' })
+    const username = profiles.find((p) => p.id === user.id)?.username ?? user.email ?? '?'
+    const catInfo = LOOT_CATEGORIES.find((c) => c.key === rollResult.category)!
+    const note = `${catInfo.emoji} ${rollResult.category} · d4=${rollResult.d4} · d100=${rollResult.d100} · Gewürfelt von ${username} am ${dateStr}`
+    await supabase.from('loot_items').insert({
+      name: rollResult.item,
+      description: note,
+      quantity: 1,
+      rarity: rollRarity,
+      assigned_to: null,
+      created_by: user.id,
+      icon: catInfo.emoji === '🔮' ? '🔮' : catInfo.emoji === '⚔️' ? '⚔️' : catInfo.emoji === '🛠️' ? '📦' : '✨',
+    })
+    setRollResult(null)
+    setShowRollPanel(false)
+    setAddingRoll(false)
+  }
+
   // Group loot = not assigned to anyone
   const groupItems = items.filter((i) => !i.assigned_to)
   // Personal loot = assigned to current user (players see own; GM sees all assigned)
@@ -110,6 +177,120 @@ export default function LootPage() {
         >
           <Plus className="w-4 h-4" /> Hinzufügen
         </button>
+      </div>
+
+      {/* ── Loot-Tabelle würfeln ─────────────────────────────────────────── */}
+      <div className="bg-zinc-900 border border-zinc-700 rounded-xl overflow-hidden">
+        <button
+          onClick={() => { setShowRollPanel(!showRollPanel); setRollResult(null) }}
+          className="w-full flex items-center justify-between px-5 py-4 hover:bg-zinc-800 transition-colors"
+        >
+          <div className="flex items-center gap-3">
+            <Dices className="w-6 h-6 text-amber-400" />
+            <div className="text-left">
+              <p className="text-sm font-bold text-zinc-100">Loot-Tabelle würfeln</p>
+              <p className="text-xs text-zinc-500">Seltenheit wählen → d4 (Kategorie) → d100 (Item)</p>
+            </div>
+          </div>
+          <span className="text-zinc-500 text-xs">{showRollPanel ? '▲' : '▼'}</span>
+        </button>
+
+        {showRollPanel && (
+          <div className="border-t border-zinc-800 p-5 space-y-4">
+            {/* Rarity selector */}
+            <div>
+              <p className="text-xs text-zinc-500 mb-2 font-medium">1. Seltenheit wählen</p>
+              <div className="flex flex-wrap gap-2">
+                {(Object.keys(LOOT_RARITY_LABELS) as LootRarityKey[]).map((r) => (
+                  <button
+                    key={r}
+                    onClick={() => { setRollRarity(r); setRollResult(null) }}
+                    className={`px-3 py-1.5 rounded-lg text-xs font-semibold border transition-all ${
+                      rollRarity === r
+                        ? RARITY_ROLL_COLORS[r] + ' ring-2 ring-offset-1 ring-offset-zinc-900 ring-white/30'
+                        : 'bg-zinc-800 text-zinc-400 border-zinc-700 hover:bg-zinc-700'
+                    }`}
+                  >
+                    {LOOT_RARITY_LABELS[r]}
+                  </button>
+                ))}
+              </div>
+            </div>
+
+            {/* Roll button */}
+            <button
+              onClick={handleRoll}
+              disabled={rolling}
+              className="w-full py-4 rounded-xl bg-gradient-to-r from-amber-600 to-orange-600 hover:from-amber-500 hover:to-orange-500 disabled:opacity-60 text-base font-bold text-white transition-all shadow-lg hover:shadow-amber-500/20 flex items-center justify-center gap-3"
+            >
+              <Dices className={`w-6 h-6 ${rolling ? 'animate-spin' : ''}`} />
+              {rolling ? 'Würfelt...' : '🎲 Würfeln!'}
+            </button>
+
+            {/* Result */}
+            {rollResult && (
+              <div className={`rounded-xl border p-4 space-y-3 ${RARITY_ROLL_COLORS[rollRarity]}`}>
+                {/* Dice results */}
+                <div className="flex items-center gap-4 flex-wrap">
+                  <div className="flex flex-col items-center">
+                    <span className="text-xs text-zinc-400 mb-1">d4</span>
+                    <div className="w-12 h-12 rounded-lg bg-zinc-900/60 border border-zinc-600 flex items-center justify-center text-2xl font-bold text-white shadow-inner">
+                      {rollResult.d4}
+                    </div>
+                  </div>
+                  <div className="flex flex-col items-center">
+                    <span className="text-xs text-zinc-400 mb-1">Kategorie</span>
+                    <div className="px-3 py-2 rounded-lg bg-zinc-900/60 border border-zinc-600 text-sm font-semibold text-white flex items-center gap-1.5">
+                      <span>{CATEGORY_ICONS[rollResult.category]}</span>
+                      <span>{rollResult.category}</span>
+                    </div>
+                  </div>
+                  <div className="flex flex-col items-center">
+                    <span className="text-xs text-zinc-400 mb-1">d100</span>
+                    <div className="w-12 h-12 rounded-lg bg-zinc-900/60 border border-zinc-600 flex items-center justify-center text-xl font-bold text-white shadow-inner">
+                      {rollResult.d100 === 100 ? '00' : rollResult.d100}
+                    </div>
+                  </div>
+                </div>
+
+                {/* Item result */}
+                {rollResult.item ? (
+                  <div className="bg-zinc-900/60 rounded-lg p-3">
+                    <p className="text-xs text-zinc-400 mb-1">Ergebnis</p>
+                    <p className="text-base font-bold text-white">{rollResult.item}</p>
+                    <p className="text-xs text-zinc-500 mt-1">
+                      {LOOT_RARITY_LABELS[rollRarity]} · {CATEGORY_ICONS[rollResult.category]} {rollResult.category}
+                    </p>
+                  </div>
+                ) : (
+                  <div className="bg-zinc-900/60 rounded-lg p-3 text-center">
+                    <p className="text-sm text-zinc-400">Kein Eintrag für d100={rollResult.d100} in {rollResult.category}</p>
+                  </div>
+                )}
+
+                {/* Actions */}
+                <div className="flex gap-2">
+                  <button
+                    onClick={handleRoll}
+                    disabled={rolling}
+                    className="flex-1 py-2.5 rounded-lg bg-zinc-800 hover:bg-zinc-700 text-sm font-medium text-zinc-200 transition-colors"
+                  >
+                    Nochmal würfeln
+                  </button>
+                  {rollResult.item && (
+                    <button
+                      onClick={handleAddRolled}
+                      disabled={addingRoll}
+                      className="flex-1 py-2.5 rounded-lg bg-amber-600 hover:bg-amber-500 disabled:opacity-60 text-sm font-bold text-white transition-colors"
+                    >
+                      {addingRoll ? 'Wird hinzugefügt...' : '+ Zum Loot hinzufügen'}
+                    </button>
+                  )}
+                </div>
+              </div>
+            )}
+          </div>
+        )}
       </div>
 
       {/* Tabs: Gruppen-Loot / Persönlicher Loot */}

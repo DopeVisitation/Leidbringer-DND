@@ -8,7 +8,6 @@ const ALIGNMENTS: Record<number, string> = {
   7: 'Rechtschaffen Böse', 8: 'Neutral Böse', 9: 'Chaotisch Böse',
 }
 
-// D&D 5e Skills mit zugehöriger Ability und deutschem Namen
 const SKILLS: { key: string; ability: string; name: string; nameDe: string }[] = [
   { key: 'acrobatics',      ability: 'DEX', name: 'Acrobatics',      nameDe: 'Akrobatik' },
   { key: 'animal-handling', ability: 'WIS', name: 'Animal Handling', nameDe: 'Tierführung' },
@@ -52,33 +51,24 @@ function allModifiers(char: { modifiers?: Record<string, DnDModifier[]> }): DnDM
   ]
 }
 
-function modAt(score: number): number {
-  return Math.floor((score - 10) / 2)
-}
+function modAt(score: number): number { return Math.floor((score - 10) / 2) }
+function fmtBonus(n: number): string { return n >= 0 ? `+${n}` : `${n}` }
 
 export async function GET(request: Request) {
   const { searchParams } = new URL(request.url)
   const url = searchParams.get('url') ?? ''
 
   const match = url.match(/characters\/(\d+)/)
-  if (!match) {
-    return NextResponse.json({ error: 'Ungültige DnD Beyond URL' }, { status: 400 })
-  }
+  if (!match) return NextResponse.json({ error: 'Ungültige DnD Beyond URL' }, { status: 400 })
 
   const characterId = match[1]
 
   try {
     const res = await fetch(
       `https://character-service.dndbeyond.com/character/v5/character/${characterId}`,
-      {
-        headers: { 'Accept': 'application/json', 'User-Agent': 'Mozilla/5.0' },
-        next: { revalidate: 300 },
-      }
+      { headers: { 'Accept': 'application/json', 'User-Agent': 'Mozilla/5.0' }, next: { revalidate: 60 } }
     )
-
-    if (!res.ok) {
-      return NextResponse.json({ error: 'Charakter nicht gefunden oder privat' }, { status: 404 })
-    }
+    if (!res.ok) return NextResponse.json({ error: 'Charakter nicht gefunden oder privat' }, { status: 404 })
 
     const json = await res.json()
     const char = json?.data
@@ -93,19 +83,15 @@ export async function GET(request: Request) {
     // ── Ability scores ────────────────────────────────────────────────────
     const baseStats: Record<string, number> = {}
     for (const s of (char.stats ?? [])) {
-      const name = STAT_IDS[s.id]
-      if (name) baseStats[name] = s.value ?? 10
+      const name = STAT_IDS[s.id]; if (name) baseStats[name] = s.value ?? 10
     }
     for (const s of (char.overrideStats ?? [])) {
-      const name = STAT_IDS[s.id]
-      if (name && s.value != null) baseStats[name] = s.value
+      const name = STAT_IDS[s.id]; if (name && s.value != null) baseStats[name] = s.value
     }
     for (const bonus of (char.bonusStats ?? [])) {
-      const name = STAT_IDS[bonus.id]
-      if (name && bonus.value) baseStats[name] = (baseStats[name] ?? 10) + bonus.value
+      const name = STAT_IDS[bonus.id]; if (name && bonus.value) baseStats[name] = (baseStats[name] ?? 10) + bonus.value
     }
 
-    // Stat-bonus modifiers (z.B. +2 STR vom Item)
     const mods = allModifiers(char)
     for (const m of mods) {
       if (m.type === 'bonus' && m.value) {
@@ -113,8 +99,7 @@ export async function GET(request: Request) {
           'strength-score': 'STR', 'dexterity-score': 'DEX', 'constitution-score': 'CON',
           'intelligence-score': 'INT', 'wisdom-score': 'WIS', 'charisma-score': 'CHA',
         }
-        const stat = map[m.subType]
-        if (stat) baseStats[stat] = (baseStats[stat] ?? 10) + m.value
+        const stat = map[m.subType]; if (stat) baseStats[stat] = (baseStats[stat] ?? 10) + m.value
       }
     }
 
@@ -126,8 +111,9 @@ export async function GET(request: Request) {
       baseHp += hitDice + (cls.level - 1) * Math.ceil(hitDice / 2 + 0.5)
     }
     const conMod = modAt(baseStats['CON'] ?? 10)
-    const hpFromCon = totalLevel * conMod
-    const maxHp = overrideHp ?? (baseHp + hpFromCon + (char.bonusHitPoints ?? 0))
+    const maxHp = overrideHp ?? (baseHp + totalLevel * conMod + (char.bonusHitPoints ?? 0))
+    const removedHp: number = char.removedHitPoints ?? 0
+    const currentHp = maxHp - removedHp
 
     // ── Proficiency bonus ────────────────────────────────────────────────
     const profBonus = Math.ceil(totalLevel / 4) + 1
@@ -136,78 +122,78 @@ export async function GET(request: Request) {
     const speed: number = char.race?.weightSpeeds?.normal?.walk ?? 30
 
     // ── Initiative ───────────────────────────────────────────────────────
-    const initiative = modAt(baseStats['DEX'] ?? 10)
+    let initiative = modAt(baseStats['DEX'] ?? 10)
+    for (const m of mods) {
+      if (m.type === 'bonus' && m.subType === 'initiative' && typeof m.value === 'number') initiative += m.value
+    }
 
     // ── Skills ───────────────────────────────────────────────────────────
     const skills = SKILLS.map((s) => {
       const isProf = mods.some((m) => m.type === 'proficiency' && m.subType === s.key)
-      const isExp = mods.some((m) => m.type === 'expertise' && m.subType === s.key)
-      const isHalfProf = mods.some(
-        (m) => (m.type === 'half-proficiency' || m.type === 'half-proficiency-round-up')
-          && m.subType === s.key
-      )
+      const isExp  = mods.some((m) => m.type === 'expertise'   && m.subType === s.key)
+      const isHalf = mods.some((m) => (m.type === 'half-proficiency' || m.type === 'half-proficiency-round-up') && m.subType === s.key)
       const abilityMod = modAt(baseStats[s.ability] ?? 10)
       let bonus = abilityMod
       if (isExp) bonus += profBonus * 2
       else if (isProf) bonus += profBonus
-      else if (isHalfProf) bonus += Math.floor(profBonus / 2)
-
-      // Extra "bonus" modifiers that explicitly target this skill
+      else if (isHalf) bonus += Math.floor(profBonus / 2)
       for (const m of mods) {
-        if (m.type === 'bonus' && m.subType === s.key && typeof m.value === 'number') {
-          bonus += m.value
-        }
+        if (m.type === 'bonus' && m.subType === s.key && typeof m.value === 'number') bonus += m.value
       }
-
-      return {
-        key: s.key,
-        name: s.name,
-        nameDe: s.nameDe,
-        ability: s.ability,
-        proficient: isProf,
-        expertise: isExp,
-        halfProficient: isHalfProf,
-        bonus,
-      }
+      return { key: s.key, name: s.name, nameDe: s.nameDe, ability: s.ability, proficient: isProf, expertise: isExp, halfProficient: isHalf, bonus }
     })
 
     // ── Saving Throws ─────────────────────────────────────────────────────
+    const SAVE_KEYS: Record<string, string> = {
+      STR: 'strength-saving-throws', DEX: 'dexterity-saving-throws',
+      CON: 'constitution-saving-throws', INT: 'intelligence-saving-throws',
+      WIS: 'wisdom-saving-throws', CHA: 'charisma-saving-throws',
+    }
     const saves = ['STR', 'DEX', 'CON', 'INT', 'WIS', 'CHA'].map((ab) => {
-      const subType = `${ab === 'STR' ? 'strength' : ab === 'DEX' ? 'dexterity' : ab === 'CON' ? 'constitution' : ab === 'INT' ? 'intelligence' : ab === 'WIS' ? 'wisdom' : 'charisma'}-saving-throws`
-      const isProf = mods.some((m) => m.type === 'proficiency' && m.subType === subType)
+      const isProf = mods.some((m) => m.type === 'proficiency' && m.subType === SAVE_KEYS[ab])
       const abilityMod = modAt(baseStats[ab] ?? 10)
-      return {
-        ability: ab,
-        proficient: isProf,
-        bonus: abilityMod + (isProf ? profBonus : 0),
-      }
+      return { ability: ab, proficient: isProf, bonus: abilityMod + (isProf ? profBonus : 0) }
     })
 
-    // ── Inventar: Armor, Weapons, Tools ──────────────────────────────────
+    // ── Passive stats ─────────────────────────────────────────────────────
+    const perceptionSkill = skills.find((s) => s.key === 'perception')
+    const investigationSkill = skills.find((s) => s.key === 'investigation')
+    const insightSkill = skills.find((s) => s.key === 'insight')
+    const passive_perception   = 10 + (perceptionSkill?.bonus ?? 0)
+    const passive_investigation = 10 + (investigationSkill?.bonus ?? 0)
+    const passive_insight      = 10 + (insightSkill?.bonus ?? 0)
+
+    // ── Darkvision ────────────────────────────────────────────────────────
+    let darkvision = 0
+    for (const m of mods) {
+      if (m.type === 'set-base' && m.subType === 'darkvision' && typeof m.value === 'number') {
+        darkvision = Math.max(darkvision, m.value)
+      }
+    }
+
+    // ── Inventory ─────────────────────────────────────────────────────────
     interface InventoryItem {
       definition?: {
-        name?: string
-        type?: string
-        filterType?: string
-        armorClass?: number
-        armorTypeId?: number
-        damage?: { diceString?: string }
-        damageType?: string
+        name?: string; type?: string; filterType?: string
+        armorClass?: number; armorTypeId?: number
+        damage?: { diceString?: string }; damageType?: string
         properties?: { name: string }[]
-        attackType?: number
-        range?: number
-        longRange?: number
+        attackType?: number; range?: number; longRange?: number
+        weight?: number; description?: string
+        isConsumable?: boolean; tags?: string[]
+        grantedModifiers?: DnDModifier[]
       }
-      equipped?: boolean
-      quantity?: number
+      equipped?: boolean; quantity?: number
+      id?: number; entityTypeId?: number
     }
     const inv: InventoryItem[] = char.inventory ?? []
 
     const armor = inv
-      .filter((it) => it.definition?.filterType === 'Armor' || it.definition?.type === 'Armor' || it.definition?.type === 'Shield')
+      .filter((it) => it.definition?.filterType === 'Armor' || it.definition?.type === 'Shield')
       .map((it) => ({
         name: it.definition?.name ?? 'Unbekannt',
         type: it.definition?.type ?? '',
+        armorTypeId: it.definition?.armorTypeId ?? 0,
         armorClass: it.definition?.armorClass ?? null,
         equipped: !!it.equipped,
       }))
@@ -218,29 +204,69 @@ export async function GET(request: Request) {
         const def = it.definition!
         const props = (def.properties ?? []).map((p) => p.name).filter(Boolean)
         const isFinesse = props.includes('Finesse')
-        const isRanged = def.attackType === 2 || (def.range ?? 0) > 5
-        // Attack stat: ranged -> DEX, finesse -> max(STR, DEX), melee -> STR
+        const isRanged  = def.attackType === 2 || (def.range ?? 0) > 5
         const strMod = modAt(baseStats['STR'] ?? 10)
         const dexMod = modAt(baseStats['DEX'] ?? 10)
         const atkMod = isRanged ? dexMod : isFinesse ? Math.max(strMod, dexMod) : strMod
+        // Check for magic bonus on this weapon from modifiers granted
+        let magicBonus = 0
+        for (const gm of (def.grantedModifiers ?? [])) {
+          if (gm.type === 'bonus' && (gm.subType === 'magic' || gm.subType === 'attack') && typeof gm.value === 'number') magicBonus = Math.max(magicBonus, gm.value)
+        }
         return {
           name: def.name ?? 'Unbekannt',
           damage: def.damage?.diceString ?? '',
           damageType: def.damageType ?? '',
           properties: props,
-          attackBonus: atkMod + profBonus,
-          damageBonus: atkMod,
-          range: def.range ?? null,
-          longRange: def.longRange ?? null,
+          attackBonus: atkMod + profBonus + magicBonus,
+          damageBonus: atkMod + magicBonus,
+          range: def.range ?? null, longRange: def.longRange ?? null,
           equipped: !!it.equipped,
         }
       })
 
-    // ── Tools (Proficiencies vom Typ "tool-*") ───────────────────────────
+    // Custom actions (DnD Beyond custom attacks)
+    interface CustomAction {
+      name?: string; toHit?: number; damage?: string; damageTypeId?: number
+      range?: number; longRange?: number; isMartialArts?: boolean; id?: number
+      fixedSaveDc?: number; isProficient?: boolean; abilityModifierStatId?: number
+    }
+    const customActions: CustomAction[] = char.customActions ?? []
+    const weaponsFromCustom = customActions
+      .filter((a) => a.toHit !== null && a.toHit !== undefined)
+      .map((a) => ({
+        name: a.name ?? 'Custom Attack',
+        damage: a.damage ?? '',
+        damageType: '',
+        properties: [],
+        attackBonus: a.toHit ?? 0,
+        damageBonus: 0,
+        range: a.range ?? null, longRange: a.longRange ?? null,
+        equipped: true,
+        isCustom: true,
+      }))
+
+    const allWeapons = [...weapons, ...weaponsFromCustom]
+
+    // ── Non-weapon, non-armor inventory items ─────────────────────────────
+    const inventoryItems = inv
+      .filter((it) => it.definition?.filterType !== 'Weapon' && it.definition?.filterType !== 'Armor' && it.definition?.type !== 'Shield')
+      .map((it) => ({
+        name: it.definition?.name ?? 'Unbekannt',
+        type: it.definition?.type ?? it.definition?.filterType ?? '',
+        quantity: it.quantity ?? 1,
+        weight: it.definition?.weight ?? 0,
+        equipped: !!it.equipped,
+      }))
+
+    // ── Tools ────────────────────────────────────────────────────────────
     const tools = mods
-      .filter((m) => m.type === 'proficiency' && (m.subType.includes('tools') || m.subType.includes('instrument') || m.subType.includes('kit') || m.subType.includes('supplies')))
+      .filter((m) => m.type === 'proficiency' && (
+        m.subType.includes('tools') || m.subType.includes('instrument') ||
+        m.subType.includes('kit')   || m.subType.includes('supplies')
+      ))
       .map((m) => m.friendlySubtypeName ?? m.subType)
-      .filter((v, i, a) => a.indexOf(v) === i) // dedupe
+      .filter((v, i, a) => a.indexOf(v) === i)
 
     // ── Languages ────────────────────────────────────────────────────────
     const languages = mods
@@ -248,65 +274,177 @@ export async function GET(request: Request) {
       .map((m) => m.friendlySubtypeName ?? m.subType)
       .filter((v, i, a) => a.indexOf(v) === i)
 
-    // ── Armor Class ──────────────────────────────────────────────────────
-    // Heuristik: höchste equipped Armor + DEX-Mod (limited by armor type) + Schild
-    let ac = 10 + modAt(baseStats['DEX'] ?? 10)  // unarmored default
-    const equippedArmor = armor.find((a) => a.equipped && a.armorClass && a.type !== 'Shield')
-    const equippedShield = armor.find((a) => a.equipped && a.type === 'Shield')
-    if (equippedArmor && equippedArmor.armorClass) {
-      // Light armor: full DEX. Medium: max +2. Heavy: no DEX.
-      // Wir behandeln pauschal: addiere DEX wenn unter Light/Medium-Definition
-      // Da das in DnD-Beyond komplex ist, lassen wir den Override (overrideArmorClass) Vorrang.
-      ac = equippedArmor.armorClass
-      const dx = modAt(baseStats['DEX'] ?? 10)
-      // Vereinfacht: erlaube DEX-Bonus, gekappt auf 2 für Plattenrüstung
-      if (equippedArmor.type?.toLowerCase().includes('light')) ac += dx
-      else if (equippedArmor.type?.toLowerCase().includes('medium')) ac += Math.min(dx, 2)
+    // ── Armor Class (FIXED) ───────────────────────────────────────────────
+    // Priority: overrideArmorClass → computed
+    let ac: number
+    if (char.overrideArmorClass != null && char.overrideArmorClass > 0) {
+      ac = char.overrideArmorClass
+    } else {
+      let baseAC = 10 + modAt(baseStats['DEX'] ?? 10) // Unarmored default
+
+      // Check 'set' type modifiers (Mage Armor = 13+DEX, Bracers of Defense = 13+DEX, etc.)
+      for (const m of mods) {
+        if (m.type === 'set' && typeof m.value === 'number') {
+          if (m.subType === 'unarmored-armor-class') {
+            baseAC = Math.max(baseAC, m.value + modAt(baseStats['DEX'] ?? 10))
+          } else if (m.subType === 'armor-class') {
+            baseAC = Math.max(baseAC, m.value)
+          }
+        }
+      }
+
+      // Equipped armor (fix: use armorTypeId, not type string)
+      const equippedArmor = armor.find((a) => a.equipped && a.armorClass && a.armorTypeId !== 0 && a.type !== 'Shield')
+      if (equippedArmor?.armorClass) {
+        const dx = modAt(baseStats['DEX'] ?? 10)
+        const typeId = equippedArmor.armorTypeId ?? 0
+        let armorAC = equippedArmor.armorClass
+        if (typeId === 1)      armorAC += dx               // Light Armor
+        else if (typeId === 2) armorAC += Math.min(dx, 2)  // Medium Armor
+        // Heavy (typeId === 3): no DEX added
+        baseAC = Math.max(baseAC, armorAC)
+      }
+
+      // Shield
+      const equippedShield = armor.find((a) => a.equipped && a.type === 'Shield')
+      if (equippedShield) baseAC += 2
+
+      // Bonus modifiers (rings, bracers, etc.)
+      for (const m of mods) {
+        if (m.type === 'bonus' && m.subType === 'armor-class' && typeof m.value === 'number') baseAC += m.value
+      }
+
+      ac = baseAC
     }
-    if (equippedShield) ac += 2
-    // AC bonus von Modifiern
-    for (const m of mods) {
-      if (m.type === 'bonus' && m.subType === 'armor-class' && typeof m.value === 'number') {
-        ac += m.value
+
+    // ── Spells ────────────────────────────────────────────────────────────
+    interface SpellSlotItem {
+      alwaysPrepared?: boolean
+      definition?: {
+        name?: string; level?: number; school?: string
+        attackType?: number; saveStatId?: number; range?: { origin?: string; rangeValue?: number }
+        description?: string; duration?: { durationUnit?: string; durationInterval?: number }
+        castingTimeDescription?: string; components?: number[]
       }
     }
-    if (char.overrideArmorClass != null) ac = char.overrideArmorClass
-
-    // ── Spells (nur Liste der bekannten, ohne Detail) ────────────────────
-    interface SpellSlotItem { definition?: { name?: string; level?: number; school?: string } }
     const classSpells = (char.classSpells ?? []).flatMap((c: { spells?: SpellSlotItem[] }) => c.spells ?? [])
-    const additionalSpells = char.spells?.race ?? []
+    const additionalSpells = [...(char.spells?.race ?? []), ...(char.spells?.background ?? []), ...(char.spells?.class ?? [])]
     const allSpells = [...classSpells, ...additionalSpells]
     const spells = allSpells
       .map((s: SpellSlotItem) => ({
         name: s.definition?.name ?? '',
         level: s.definition?.level ?? 0,
         school: s.definition?.school ?? '',
+        attackType: s.definition?.attackType ?? null,
+        alwaysPrepared: s.alwaysPrepared ?? false,
       }))
       .filter((s) => s.name)
 
+    // ── Spell slots ───────────────────────────────────────────────────────
+    const rawSlots: Record<string, { used: number; available: number }> = {}
+    const spellSlotInfo = char.spellSlots ?? []
+    for (const slot of spellSlotInfo) {
+      const lvl = slot.level ?? slot.spellLevel
+      if (lvl) rawSlots[`${lvl}`] = { used: slot.used ?? 0, available: slot.available ?? 0 }
+    }
+
+    // ── Features ─────────────────────────────────────────────────────────
+    interface FeatureDef { name?: string; description?: string; snippet?: string; requiredLevel?: number }
+    const features: { name: string; source: string; description: string; level?: number }[] = []
+
+    // Class features
+    for (const cls of (char.classes ?? [])) {
+      const className: string = cls.definition?.name ?? 'Class'
+      const subName: string | undefined = cls.subclassDefinition?.name
+      for (const feat of (cls.classFeatures ?? [])) {
+        const d: FeatureDef = feat.definition ?? feat
+        if (d.name && feat.requiredLevel <= cls.level) {
+          features.push({
+            name: d.name,
+            source: subName && (feat.classFeatureTypeId === 2 || feat.id > 10000) ? subName : className,
+            description: d.description ?? d.snippet ?? '',
+            level: feat.requiredLevel,
+          })
+        }
+      }
+      for (const feat of (cls.subclassDefinition?.classFeatures ?? [])) {
+        const d: FeatureDef = feat.definition ?? feat
+        if (d.name && feat.requiredLevel <= cls.level) {
+          features.push({
+            name: d.name,
+            source: subName ?? className,
+            description: d.description ?? d.snippet ?? '',
+            level: feat.requiredLevel,
+          })
+        }
+      }
+    }
+
+    // Race traits
+    for (const trait of (char.race?.racialTraits ?? [])) {
+      const d: FeatureDef = trait.definition ?? trait
+      if (d.name) features.push({ name: d.name, source: char.race?.fullName ?? 'Race', description: d.description ?? '' })
+    }
+
+    // Feats
+    for (const feat of (char.feats ?? [])) {
+      const d: FeatureDef = feat.definition ?? feat
+      if (d.name) features.push({ name: d.name, source: 'Feat', description: d.description ?? '' })
+    }
+
+    // ── Currencies ───────────────────────────────────────────────────────
+    const currencies = {
+      cp: char.currencies?.cp ?? 0, sp: char.currencies?.sp ?? 0,
+      ep: char.currencies?.ep ?? 0, gp: char.currencies?.gp ?? 0,
+      pp: char.currencies?.pp ?? 0,
+    }
+
+    // ── Character notes / traits ──────────────────────────────────────────
+    const characterNotes = {
+      personalityTraits: char.traits?.personalityTraits ?? '',
+      ideals:            char.traits?.ideals ?? '',
+      bonds:             char.traits?.bonds ?? '',
+      flaws:             char.traits?.flaws ?? '',
+      backstory:         char.notes?.backstory ?? '',
+      appearance:        char.traits?.appearance ?? '',
+    }
+
+    // ── Background feature ────────────────────────────────────────────────
+    const backgroundFeature = char.background?.definition?.featureDescription ?? ''
+    const backgroundName    = char.background?.definition?.name ?? ''
+
+    // ── Final response ────────────────────────────────────────────────────
     return NextResponse.json({
       character_name: char.name ?? 'Unbekannt',
       class_name: classString || 'Unbekannt',
       level: totalLevel || 1,
       race: char.race?.fullName ?? char.race?.baseName ?? '',
-      background: char.background?.definition?.name ?? '',
+      background: backgroundName,
+      background_feature: backgroundFeature,
       alignment: ALIGNMENTS[char.alignmentId] ?? '',
       avatar_url: char.decorations?.avatarUrl ?? null,
       stats: baseStats,
       max_hp: maxHp,
+      current_hp: currentHp,
       armor_class: ac,
       proficiency_bonus: profBonus,
       speed,
       initiative,
       inspiration: char.inspiration ?? false,
+      passive_perception, passive_investigation, passive_insight,
+      darkvision,
       skills,
       saves,
       armor,
-      weapons,
+      weapons: allWeapons,
       tools,
       languages,
       spells,
+      spell_slots: rawSlots,
+      features,
+      inventory_items: inventoryItems,
+      currencies,
+      character_notes: characterNotes,
     })
   } catch (e) {
     console.error('DnD Beyond fetch failed', e)

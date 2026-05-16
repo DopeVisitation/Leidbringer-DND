@@ -14,219 +14,9 @@ const MAP = {
   initScale: 0.14,
 }
 
-// Eingebaute Orte — Koordinaten = Mitte der Beschriftung / Pin-Punkt aus der Karte
+// Eingebaute Orte — leer: alle Orte werden manuell über „Ort hinzufügen" eingepflegt
+// Orte die gesucht werden sollen bitte über die Suche → "Ort hinzufügen" in die DB eintragen
 const BUILTIN_LOCATIONS: { name: string; x: number; y: number }[] = [
-  // ── Sword Coast North & Icewind Dale ───────────────────────────────────
-  { name: 'Luskan',              x: 53.5, y: 9.0  },
-  { name: 'Neverwinter',         x: 52.0, y: 13.5 },
-  { name: 'Port Llast',          x: 51.5, y: 17.0 },
-  { name: "Helm's Hold",         x: 53.0, y: 18.0 },
-  { name: 'Thundertree',         x: 51.5, y: 19.5 },
-  { name: 'Leilon',              x: 52.0, y: 21.5 },
-  { name: 'Phandalin',           x: 56.5, y: 24.5 },
-  { name: 'Wave Echo Cave',      x: 58.0, y: 26.5 },
-  { name: 'Conyberry',           x: 60.5, y: 24.0 },
-  { name: 'Old Owl Well',        x: 61.0, y: 23.5 },
-  { name: 'Mount Hotenow',       x: 55.0, y: 16.0 },
-  { name: 'Gauntlgrym',          x: 56.5, y: 15.5 },
-  { name: "Morgur's Mound",      x: 56.5, y: 17.0 },
-  { name: 'Blackford Crossing',  x: 53.5, y: 15.0 },
-  { name: 'Raven Rock',          x: 53.5, y: 12.0 },
-  { name: 'Neverwinter Wood',    x: 54.0, y: 18.5 },
-  { name: 'Mere of Dead Men',    x: 53.0, y: 25.0 },
-  { name: 'Thornhold',           x: 53.5, y: 26.0 },
-
-  // ── Waterdeep / Heartlands North ───────────────────────────────────────
-  { name: 'Waterdeep',           x: 55.5, y: 30.5 },
-  { name: 'Amphail',             x: 56.5, y: 33.5 },
-  { name: 'Red Larch',           x: 58.0, y: 35.5 },
-  { name: 'Goldenfields',        x: 58.5, y: 32.5 },
-  { name: 'Westbridge',          x: 56.5, y: 29.5 },
-  { name: 'Bargewright Inn',     x: 57.5, y: 28.0 },
-  { name: 'Triboar',             x: 48.0, y: 25.0 },
-  { name: 'Yartar',              x: 51.0, y: 27.0 },
-  { name: 'Longsaddle',          x: 47.0, y: 19.0 },
-  { name: 'Sword Mountains',     x: 53.0, y: 28.0 },
-  { name: 'Stone Stand',         x: 59.5, y: 17.5 },
-  { name: 'The Long Road',       x: 50.0, y: 22.0 },
-
-  // ── Middle Sword Coast ─────────────────────────────────────────────────
-  { name: 'Daggerford',          x: 48.0, y: 40.0 },
-  { name: 'Secomber',            x: 52.0, y: 36.0 },
-  { name: 'Dragonspear Castle',  x: 51.5, y: 47.5 },
-  { name: 'Misty Forest',        x: 53.0, y: 42.0 },
-  { name: 'Trollbark Forest',    x: 52.0, y: 47.0 },
-  { name: "Warlock's Crypt",     x: 50.0, y: 50.5 },
-  { name: 'Trielta Hills',       x: 61.0, y: 58.0 },
-  { name: 'Olfhumbo',            x: 48.0, y: 47.0 },
-
-  // ── Baldur's Gate Region ───────────────────────────────────────────────
-  { name: 'Boareskyr Bridge',    x: 57.0, y: 55.5 },
-  { name: 'Trollclaw Ford',      x: 53.0, y: 56.5 },
-  { name: 'The Trollclaws',      x: 53.5, y: 54.5 },
-  { name: 'Soubar',              x: 53.5, y: 60.0 },
-  { name: "Baldur's Gate",       x: 51.5, y: 64.0 },
-  { name: 'Beregost',            x: 52.0, y: 67.0 },
-  { name: 'Nashkel',             x: 53.0, y: 71.0 },
-  { name: 'Candlekeep',          x: 50.0, y: 71.0 },
-  { name: 'Cloakwood',           x: 50.0, y: 67.5 },
-  { name: 'Wood of Sharp Teeth', x: 56.5, y: 67.5 },
-  { name: 'Fort Morninglord',    x: 57.5, y: 63.0 },
-  { name: 'River Chionthar',     x: 54.5, y: 62.0 },
-  { name: 'The Fields of the Dead', x: 56.0, y: 58.5 },
-
-  // ── Elturgard / Western Heartlands ─────────────────────────────────────
-  { name: 'Elturel',             x: 58.0, y: 62.0 },
-  { name: 'Elturgard',           x: 58.0, y: 65.0 },
-  { name: 'Scornubel',           x: 60.5, y: 58.0 },
-  { name: 'Berdusk',             x: 63.0, y: 67.0 },
-  { name: 'Iriaebor',            x: 67.0, y: 70.0 },
-  { name: 'Hardbuckler',         x: 64.5, y: 59.5 },
-  { name: 'Easting',             x: 70.0, y: 70.0 },
-  { name: 'Proskur',             x: 72.0, y: 67.0 },
-  { name: 'Elversult',           x: 75.0, y: 71.0 },
-  { name: 'Marsember',           x: 74.0, y: 67.0 },
-  { name: 'Priapurl',            x: 72.0, y: 70.0 },
-  { name: 'Najara',              x: 60.0, y: 51.0 },
-  { name: 'Forest of Wyrms',     x: 60.0, y: 54.0 },
-
-  // ── Icewind Dale (Ten Towns) ───────────────────────────────────────────
-  { name: 'Icewind Dale',        x: 63.0, y: 4.0  },
-  { name: 'Bryn Shander',        x: 64.0, y: 5.0  },
-  { name: 'Targos',              x: 63.5, y: 4.0  },
-  { name: 'Termalaine',          x: 63.0, y: 3.5  },
-  { name: 'Lonelywood',          x: 62.0, y: 3.0  },
-  { name: 'Caer-Konig',          x: 65.5, y: 4.0  },
-  { name: 'Caer-Dineval',        x: 65.0, y: 4.5  },
-  { name: 'Easthaven',           x: 65.5, y: 5.5  },
-  { name: "Dougan's Hole",       x: 65.0, y: 6.5  },
-  { name: 'Reghed Glacier',      x: 65.0, y: 1.5  },
-  { name: 'Sea of Moving Ice',   x: 62.0, y: 2.5  },
-  { name: 'Spine of the World',  x: 50.0, y: 9.5  },
-  { name: 'Great Worm Cavern',   x: 50.0, y: 9.0  },
-  { name: 'The Lurkwood',        x: 50.0, y: 12.0 },
-  { name: 'Kingdom of Many Arrows', x: 54.0, y: 7.5  },
-  { name: 'River Mirar',         x: 47.0, y: 11.0 },
-  { name: 'River Surbrin',       x: 56.0, y: 11.0 },
-  { name: 'Cold Wood',           x: 60.0, y: 11.0 },
-  { name: "Beorunna's Well",     x: 60.0, y: 11.5 },
-
-  // ── Silver Marches ─────────────────────────────────────────────────────
-  { name: 'Silverymoon',         x: 54.0, y: 17.0 },
-  { name: 'Everlund',            x: 53.5, y: 18.5 },
-  { name: 'Sundabar',            x: 62.0, y: 16.5 },
-  { name: 'Mithral Hall',        x: 53.0, y: 15.5 },
-  { name: 'Citadel Adbar',       x: 63.0, y: 11.0 },
-  { name: 'Citadel Felbarr',     x: 60.0, y: 14.0 },
-  { name: 'Menzoberranzan',      x: 55.5, y: 15.5 },
-  { name: 'Settlestone',         x: 53.0, y: 14.5 },
-  { name: 'One Stone',           x: 55.5, y: 14.0 },
-  { name: 'Quaervarr',           x: 54.5, y: 16.0 },
-  { name: 'River Rauvin',        x: 57.0, y: 16.5 },
-  { name: 'Hellgate Keep',       x: 49.0, y: 19.0 },
-  { name: 'The Evermoors',       x: 51.0, y: 19.5 },
-  { name: 'Castle Hartwick',     x: 63.0, y: 6.5  },
-  { name: 'Hartsvale',           x: 67.0, y: 6.5  },
-  { name: 'The Spires',          x: 64.0, y: 8.5  },
-  { name: 'Ascore',              x: 66.0, y: 13.5 },
-  { name: 'Arn Forest',          x: 63.0, y: 15.0 },
-  { name: 'Nether Mountains',    x: 64.0, y: 16.0 },
-
-  // ── High Forest & Anauroch ─────────────────────────────────────────────
-  { name: 'The High Forest',     x: 58.0, y: 25.0 },
-  { name: 'Star Mounts',         x: 53.0, y: 28.0 },
-  { name: 'Karse',               x: 57.0, y: 26.0 },
-  { name: 'Unicorn Run',         x: 55.0, y: 30.0 },
-  { name: 'Southwood',           x: 60.0, y: 22.0 },
-  { name: 'Grandfather Tree',    x: 54.0, y: 22.0 },
-  { name: 'Delimbiyr River',     x: 51.0, y: 36.5 },
-  { name: 'Anauroch',            x: 76.0, y: 39.5 },
-  { name: 'The High Ice',        x: 78.0, y: 12.0 },
-  { name: 'The Frozen Sea',      x: 67.0, y: 23.0 },
-  { name: 'The Far Forest',      x: 64.0, y: 20.0 },
-  { name: 'The Plain of Standing Stones', x: 75.0, y: 30.0 },
-
-  // ── Loudwater / Heartlands East ────────────────────────────────────────
-  { name: 'Loudwater',           x: 64.0, y: 32.0 },
-  { name: 'Llorkh',              x: 67.0, y: 36.0 },
-  { name: 'Asbravn',             x: 60.0, y: 53.0 },
-
-  // ── High Moor & Eastern Sword Coast ────────────────────────────────────
-  { name: 'The High Moor',       x: 57.0, y: 45.0 },
-  { name: 'Orogoth',             x: 57.5, y: 43.5 },
-  { name: 'Serpent Hills',       x: 60.0, y: 47.0 },
-  { name: 'Marsh of Chelimber',  x: 65.0, y: 41.0 },
-  { name: 'Greycloak Hills',     x: 68.0, y: 41.0 },
-  { name: 'Evereska',            x: 69.0, y: 47.0 },
-  { name: 'Sunset Mountains',    x: 67.5, y: 66.0 },
-  { name: 'The Storm Horns',     x: 80.0, y: 70.0 },
-  { name: 'Darkhold',            x: 70.0, y: 60.0 },
-  { name: 'Lake of Dragons',     x: 76.0, y: 68.0 },
-  { name: 'The Far Hills',       x: 66.0, y: 60.0 },
-  { name: 'The Reaching Woods',  x: 64.0, y: 64.0 },
-  { name: 'Cornubel',            x: 63.0, y: 62.0 },
-  { name: 'Battle of Bones',     x: 80.0, y: 65.0 },
-
-  // ── Amn / Tethyr (south) ───────────────────────────────────────────────
-  { name: 'Athkatla',            x: 60.0, y: 80.0 },
-  { name: 'Crimmor',             x: 58.5, y: 78.0 },
-  { name: 'Esmeltaran',          x: 61.0, y: 82.0 },
-  { name: 'Murann',              x: 54.0, y: 84.0 },
-  { name: 'Trademeet',           x: 62.0, y: 81.0 },
-  { name: 'Imnesvale',           x: 60.0, y: 80.5 },
-  { name: 'The Cloud Peaks',     x: 56.0, y: 80.0 },
-  { name: 'The Small Teeth',     x: 56.0, y: 84.0 },
-  { name: 'Forest of Tethir',    x: 62.0, y: 88.0 },
-  { name: 'Troll Mountains',     x: 69.0, y: 76.0 },
-  { name: 'The Snakewood',       x: 64.0, y: 80.0 },
-  { name: 'Shilmista Forest',    x: 70.0, y: 84.0 },
-  { name: 'Snowflake Mountains', x: 73.0, y: 87.0 },
-  { name: 'Tejarn Hills',        x: 64.0, y: 88.0 },
-  { name: "The Giant's Plain",   x: 73.0, y: 78.0 },
-  { name: 'Green Fields',        x: 64.0, y: 75.0 },
-  { name: 'Riatavin',            x: 67.0, y: 88.0 },
-  { name: "Giant's Run Mountains", x: 78.0, y: 78.0 },
-
-  // ── Inseln (Moonshae, Nelanthor) ───────────────────────────────────────
-  { name: 'Moonshae Isles',      x: 35.0, y: 45.0 },
-  { name: 'Caer Callidyrr',      x: 36.0, y: 35.0 },
-  { name: 'Caer Corwell',        x: 35.0, y: 49.5 },
-  { name: 'Iron Keep',           x: 34.0, y: 38.0 },
-  { name: 'Alaron',              x: 40.0, y: 41.0 },
-  { name: 'Llewellyn',           x: 39.5, y: 43.0 },
-  { name: 'Snowdown',            x: 42.0, y: 51.5 },
-  { name: 'Gwynneth',            x: 34.5, y: 48.0 },
-  { name: 'Moray',               x: 31.0, y: 47.5 },
-  { name: "Oman's Isle",         x: 33.0, y: 42.5 },
-  { name: 'Norland',             x: 28.0, y: 38.0 },
-  { name: 'Sea of Moonshae',     x: 36.0, y: 39.0 },
-  { name: 'Northlander Isles',   x: 37.0, y: 27.0 },
-  { name: 'Korinn Archipelago',  x: 41.0, y: 30.0 },
-  { name: 'The Whale Bones',     x: 39.0, y: 24.0 },
-  { name: 'Ruathym',             x: 32.0, y: 27.0 },
-  { name: 'Mintarn',             x: 41.0, y: 55.0 },
-  { name: 'The Purple Rocks',    x: 39.0, y: 16.0 },
-  { name: 'Gundarlun',           x: 34.0, y: 22.0 },
-  { name: 'Tuern',               x: 27.0, y: 10.0 },
-  { name: 'Skadaurak',           x: 53.0, y: 47.0 },
-  { name: 'Orlumbor',            x: 48.0, y: 47.0 },
-  { name: 'The Nelanther',       x: 47.0, y: 70.0 },
-
-  // ── Meere & Hauptregionen ──────────────────────────────────────────────
-  { name: 'Sword Coast',         x: 49.0, y: 55.0 },
-  { name: 'Sea of Swords',       x: 44.0, y: 60.0 },
-  { name: 'Trackless Sea',       x: 28.0, y: 50.0 },
-  { name: 'The Endless Ice Sea', x: 53.0, y: 2.0  },
-
-  // ── Östlicher Rand (Daleland / Sembia / Cormyr) ────────────────────────
-  { name: 'Sembia',              x: 92.0, y: 70.0 },
-  { name: 'Cormyr',              x: 85.0, y: 65.0 },
-  { name: 'The Dragonmere',      x: 88.0, y: 68.0 },
-  { name: 'Westgate',            x: 86.0, y: 77.0 },
-  { name: 'Hillsfar',            x: 93.0, y: 50.0 },
-  { name: 'Zhentil Keep',        x: 89.0, y: 49.0 },
-  { name: 'Cormanthor',          x: 92.0, y: 55.0 },
-  { name: 'Myth Drannor',        x: 91.0, y: 56.0 },
 ]
 
 const MARKER_COLORS = [
@@ -451,6 +241,11 @@ export default function MapsPage() {
     setSearch('')
     setSearchResults([])
     setSearchPin({ x: hit.x, y: hit.y, name: hit.name })
+    // Eigene Orte: Popup öffnen damit man sie löschen kann
+    if (hit.source === 'custom' && hit.id) {
+      const found = customLocations.find((l) => l.id === hit.id)
+      if (found) setSelectedCustom(found)
+    }
   }
 
   const toScreen = (xPct: number, yPct: number) => ({
@@ -627,23 +422,7 @@ export default function MapsPage() {
           )
         })}
 
-        {/* Custom Locations (eigene Orte) */}
-        {customLocations.map((loc) => {
-          const pos = toScreen(loc.x, loc.y)
-          return (
-            <button
-              key={loc.id}
-              onClick={(e) => { e.stopPropagation(); if (addMode === 'none') setSelectedCustom(loc) }}
-              style={{ left: pos.x, top: pos.y, transform: 'translate(-50%, -50%)' }}
-              className="absolute z-10 group flex flex-col items-center hover:z-20"
-            >
-              <div className="w-3 h-3 rounded-full bg-emerald-400 border-2 border-white/80 shadow-[0_0_6px_rgba(52,211,153,0.7)]" />
-              <span className="opacity-0 group-hover:opacity-100 transition-opacity absolute top-4 px-1.5 py-0.5 rounded bg-emerald-900/80 border border-emerald-500/40 text-[10px] text-emerald-100 whitespace-nowrap pointer-events-none">
-                {loc.name}
-              </span>
-            </button>
-          )
-        })}
+        {/* Custom Locations — keine persistenten Pins; nur via Suche sichtbar */}
 
         {/* Search Pin — Punkt sitzt EXAKT auf der Ortsposition */}
         {searchPin && (() => {
