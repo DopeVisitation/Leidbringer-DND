@@ -2,15 +2,16 @@
 
 import Link from 'next/link'
 import { usePathname } from 'next/navigation'
-import { CalendarDays, Shield, Dices, MapPin, MessageSquare } from 'lucide-react'
+import { CalendarDays, Shield, Dices, MapPin, MessageSquare, Swords } from 'lucide-react'
 import { cn } from '@/lib/utils'
 
 const navItems = [
-  { href: '/dashboard', label: 'Home',     icon: Shield        },
-  { href: '/sessions',  label: 'Sessions', icon: CalendarDays  },
-  { href: '/maps',      label: 'Karte',    icon: MapPin        },
-  { href: '/dice',      label: 'Würfel',   icon: Dices         },
-  { href: '/chat',      label: 'Chat',     icon: MessageSquare },
+  { href: '/dashboard',  label: 'Home',     icon: Shield        },
+  { href: '/sessions',   label: 'Sessions', icon: CalendarDays  },
+  { href: '/maps',       label: 'Karte',    icon: MapPin        },
+  { href: '/dice',       label: 'Würfel',   icon: Dices         },
+  { href: '/chat',       label: 'Chat',     icon: MessageSquare },
+  { href: '/battlemap',  label: 'Kampf',    icon: Swords        },
 ]
 
 export function MobileNav() {
@@ -26,7 +27,7 @@ export function MobileNav() {
               key={href}
               href={href}
               className={cn(
-                'flex-1 flex flex-col items-center gap-1 py-3 text-xs font-medium transition-colors',
+                'flex-1 flex flex-col items-center gap-1 py-2.5 text-[10px] font-medium transition-colors',
                 active ? 'text-amber-400' : 'text-zinc-500'
               )}
             >

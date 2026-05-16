@@ -3,7 +3,7 @@
 import { useState } from 'react'
 import { format } from 'date-fns'
 import { de } from 'date-fns/locale'
-import { MapPin, Monitor, Users, ChevronDown, ChevronUp, ExternalLink } from 'lucide-react'
+import { MapPin, Monitor, Users, ChevronDown, ChevronUp, ExternalLink, Trash2 } from 'lucide-react'
 import { cn, getSessionColor, getSessionBadgeColor, countAccepted, formatDate, formatTime } from '@/lib/utils'
 import type { Session, ResponseStatus, AttendanceType, User } from '@/types'
 import { createClient } from '@/lib/supabase/client'
@@ -26,15 +26,21 @@ const ATTENDANCE_OPTIONS: { value: AttendanceType; label: string }[] = [
   { value: 'both', label: 'Beides möglich' },
 ]
 
-export function SessionCard({ session, currentUser, requiredPlayers = 4 }: SessionCardProps) {
+export function SessionCard({ session, currentUser, requiredPlayers = 4, onDeleted }: SessionCardProps & { onDeleted?: () => void }) {
   const [expanded, setExpanded] = useState(false)
   const [saving, setSaving] = useState(false)
+  const [confirmDelete, setConfirmDelete] = useState(false)
   const supabase = createClient()
 
   const responses = session.responses ?? []
   const accepted = countAccepted(responses)
   const myResponse = responses.find((r) => r.user_id === currentUser.id)
   const isGM = currentUser.role === 'gm'
+
+  const handleDelete = async () => {
+    await supabase.from('sessions').delete().eq('id', session.id)
+    onDeleted?.()
+  }
 
   const handleResponse = async (status: ResponseStatus, attendanceType?: AttendanceType) => {
     setSaving(true)
@@ -69,12 +75,30 @@ export function SessionCard({ session, currentUser, requiredPlayers = 4 }: Sessi
             {formatDate(session.start_date)} · {formatTime(session.start_date)} – {formatTime(session.end_date)}
           </p>
         </div>
-        <button
-          onClick={() => setExpanded(!expanded)}
-          className="text-zinc-400 hover:text-zinc-200 transition-colors flex-shrink-0 mt-1"
-        >
-          {expanded ? <ChevronUp className="w-5 h-5" /> : <ChevronDown className="w-5 h-5" />}
-        </button>
+        <div className="flex items-center gap-1 flex-shrink-0 mt-1">
+          {isGM && (
+            confirmDelete ? (
+              <div className="flex items-center gap-1">
+                <button onClick={handleDelete} className="text-xs px-2 py-1 rounded bg-red-600 text-white font-medium">Löschen</button>
+                <button onClick={() => setConfirmDelete(false)} className="text-xs px-2 py-1 rounded bg-zinc-700 text-zinc-300">Nein</button>
+              </div>
+            ) : (
+              <button
+                onClick={() => setConfirmDelete(true)}
+                className="p-1.5 text-zinc-600 hover:text-red-400 transition-colors"
+                title="Session löschen"
+              >
+                <Trash2 className="w-4 h-4" />
+              </button>
+            )
+          )}
+          <button
+            onClick={() => setExpanded(!expanded)}
+            className="text-zinc-400 hover:text-zinc-200 transition-colors"
+          >
+            {expanded ? <ChevronUp className="w-5 h-5" /> : <ChevronDown className="w-5 h-5" />}
+          </button>
+        </div>
       </div>
 
       {/* Quick response for players */}

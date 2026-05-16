@@ -12,9 +12,10 @@ interface DiceFavorite {
   id: string
   name: string
   attack_bonus: number
-  damage_dice: string
+  dice_config: DiceConfig[]
   damage_bonus: number
-  damage_type: string | null
+  damage_type?: string | null
+  damage_dice?: string | null
 }
 
 const DICE_COLORS: Record<string, string> = {
@@ -123,7 +124,11 @@ export default function DicePage() {
   const [openSections, setOpenSections] = useState({ checks: true, saves: true, skills: false, attacks: true })
   const [favorites, setFavorites] = useState<DiceFavorite[]>([])
   const [showFavForm, setShowFavForm] = useState(false)
-  const [favForm, setFavForm] = useState({ name: '', attack_bonus: '0', damage_dice: '1d6', damage_bonus: '0', damage_type: '' })
+  const [favName, setFavName] = useState('')
+  const [favAtkBonus, setFavAtkBonus] = useState('0')
+  const [favDmgBonus, setFavDmgBonus] = useState('0')
+  const [favDiceConfig, setFavDiceConfig] = useState<DiceConfig[]>([])
+  const [favDamageType, setFavDamageType] = useState<string | null>(null)
   const logRef = useRef<HTMLDivElement>(null)
 
   useEffect(() => {
@@ -159,19 +164,42 @@ export default function DicePage() {
   }
 
   const saveFavorite = async () => {
-    if (!user || !favForm.name.trim() || !favForm.damage_dice.trim()) return
+    if (!user || !favName.trim() || favDiceConfig.length === 0) return
     await supabase.from('dice_favorites').insert({
       user_id: user.id,
-      name: favForm.name.trim(),
-      attack_bonus: parseInt(favForm.attack_bonus) || 0,
-      damage_dice: favForm.damage_dice.trim(),
-      damage_bonus: parseInt(favForm.damage_bonus) || 0,
-      damage_type: favForm.damage_type || null,
+      name: favName.trim(),
+      attack_bonus: parseInt(favAtkBonus) || 0,
+      damage_bonus: parseInt(favDmgBonus) || 0,
+      dice_config: favDiceConfig,
+      damage_dice: null,
+      damage_type: null,
     })
-    setFavForm({ name: '', attack_bonus: '0', damage_dice: '1d6', damage_bonus: '0', damage_type: '' })
+    setFavName(''); setFavAtkBonus('0'); setFavDmgBonus('0')
+    setFavDiceConfig([]); setFavDamageType(null)
     setShowFavForm(false)
     loadFavorites()
   }
+
+  const favAdjustCount = (type: string, delta: number) => {
+    setFavDiceConfig(prev => {
+      const dmg = favDamageType ?? undefined
+      const idx = prev.findIndex(c => c.type === type && (c.damageType ?? undefined) === dmg)
+      if (idx === -1) {
+        if (delta > 0) {
+          const entry: DiceConfig = dmg ? { type, count: 1, damageType: dmg } : { type, count: 1 }
+          return [...prev, entry]
+        }
+        return prev
+      }
+      const newCount = prev[idx].count + delta
+      if (newCount <= 0) return prev.filter((_, i) => i !== idx)
+      return prev.map((c, i) => i === idx ? { ...c, count: newCount } : c)
+    })
+  }
+
+  const favGetCount = (type: string) =>
+    favDiceConfig.filter(c => c.type === type && (c.damageType ?? undefined) === (favDamageType ?? undefined))
+      .reduce((s, c) => s + c.count, 0)
 
   const deleteFavorite = async (id: string) => {
     await supabase.from('dice_favorites').delete().eq('id', id)
@@ -451,41 +479,80 @@ export default function DicePage() {
         </div>
 
         {showFavForm && (
-          <div className="bg-zinc-800/60 rounded-lg p-3 space-y-2 border border-zinc-700">
-            <input
-              className="w-full bg-zinc-800 border border-zinc-700 rounded-lg px-3 py-1.5 text-sm text-zinc-100 placeholder-zinc-500 focus:outline-none focus:border-amber-500"
-              placeholder="Name (z.B. Schwertangriff)"
-              value={favForm.name}
-              onChange={(e) => setFavForm((f) => ({ ...f, name: e.target.value }))}
-            />
-            <div className="grid grid-cols-4 gap-2">
-              <div className="flex flex-col gap-1">
+          <div className="bg-zinc-800/60 rounded-lg p-3 space-y-3 border border-zinc-700">
+            {/* Name + bonuses */}
+            <div className="grid grid-cols-3 gap-2">
+              <input
+                className="col-span-3 bg-zinc-800 border border-zinc-700 rounded-lg px-3 py-1.5 text-sm text-zinc-100 placeholder-zinc-500 focus:outline-none focus:border-amber-500"
+                placeholder="Name (z.B. Feuerschwert-Angriff)"
+                value={favName}
+                onChange={(e) => setFavName(e.target.value)}
+              />
+              <div>
                 <label className="text-[10px] text-zinc-500 uppercase font-semibold">Atk Bonus</label>
-                <input type="number" className="bg-zinc-800 border border-zinc-700 rounded-lg px-2 py-1.5 text-sm text-zinc-100 text-center focus:outline-none focus:border-amber-500"
-                  value={favForm.attack_bonus} onChange={(e) => setFavForm((f) => ({ ...f, attack_bonus: e.target.value }))} />
+                <input type="number" className="mt-0.5 w-full bg-zinc-800 border border-zinc-700 rounded-lg px-2 py-1.5 text-sm text-zinc-100 text-center focus:outline-none focus:border-amber-500"
+                  value={favAtkBonus} onChange={(e) => setFavAtkBonus(e.target.value)} />
               </div>
-              <div className="flex flex-col gap-1">
-                <label className="text-[10px] text-zinc-500 uppercase font-semibold">Würfel</label>
-                <input className="bg-zinc-800 border border-zinc-700 rounded-lg px-2 py-1.5 text-sm text-zinc-100 text-center focus:outline-none focus:border-amber-500"
-                  placeholder="1d6" value={favForm.damage_dice} onChange={(e) => setFavForm((f) => ({ ...f, damage_dice: e.target.value }))} />
-              </div>
-              <div className="flex flex-col gap-1">
+              <div>
                 <label className="text-[10px] text-zinc-500 uppercase font-semibold">Schad Bonus</label>
-                <input type="number" className="bg-zinc-800 border border-zinc-700 rounded-lg px-2 py-1.5 text-sm text-zinc-100 text-center focus:outline-none focus:border-amber-500"
-                  value={favForm.damage_bonus} onChange={(e) => setFavForm((f) => ({ ...f, damage_bonus: e.target.value }))} />
+                <input type="number" className="mt-0.5 w-full bg-zinc-800 border border-zinc-700 rounded-lg px-2 py-1.5 text-sm text-zinc-100 text-center focus:outline-none focus:border-amber-500"
+                  value={favDmgBonus} onChange={(e) => setFavDmgBonus(e.target.value)} />
               </div>
-              <div className="flex flex-col gap-1">
+              <div>
                 <label className="text-[10px] text-zinc-500 uppercase font-semibold">Schadensart</label>
-                <select className="bg-zinc-800 border border-zinc-700 rounded-lg px-2 py-1.5 text-xs text-zinc-100 focus:outline-none focus:border-amber-500"
-                  value={favForm.damage_type} onChange={(e) => setFavForm((f) => ({ ...f, damage_type: e.target.value }))}>
-                  <option value="">–</option>
+                <select className="mt-0.5 w-full bg-zinc-800 border border-zinc-700 rounded-lg px-2 py-1.5 text-xs text-zinc-100 focus:outline-none focus:border-amber-500"
+                  value={favDamageType ?? ''} onChange={(e) => setFavDamageType(e.target.value || null)}>
+                  <option value="">Neutral</option>
                   {DAMAGE_TYPES.map((dt) => <option key={dt.id} value={dt.id}>{dt.icon} {dt.label}</option>)}
                 </select>
               </div>
             </div>
+
+            {/* Mini dice picker */}
+            <div>
+              <label className="text-[10px] text-zinc-500 uppercase font-semibold block mb-1.5">Würfel auswählen</label>
+              <div className="grid grid-cols-7 gap-1.5">
+                {DICE_TYPES.map((type) => {
+                  const cnt = favGetCount(type)
+                  const dt = damageOf(favDamageType)
+                  return (
+                    <div key={type} className="flex flex-col items-center gap-1">
+                      <button
+                        onClick={() => favAdjustCount(type, 1)}
+                        className={`w-10 h-10 rounded-lg border-2 font-bold text-xs transition-all ${
+                          cnt > 0
+                            ? dt ? `${dt.bg} ${dt.border} ${dt.color}` : 'bg-amber-600/20 border-amber-500 text-amber-300'
+                            : 'bg-zinc-800 border-zinc-700 text-zinc-400 hover:border-zinc-500'
+                        }`}
+                      >{type}</button>
+                      {cnt > 0 && (
+                        <div className="flex items-center gap-0.5">
+                          <button onClick={() => favAdjustCount(type, -1)} className="p-0.5 text-zinc-500 hover:text-zinc-300"><Minus className="w-2.5 h-2.5" /></button>
+                          <span className={`text-xs font-bold w-4 text-center ${dt ? dt.color : DICE_COLORS[type]}`}>{cnt}</span>
+                          <button onClick={() => favAdjustCount(type, 1)} className="p-0.5 text-zinc-500 hover:text-zinc-300"><Plus className="w-2.5 h-2.5" /></button>
+                        </div>
+                      )}
+                    </div>
+                  )
+                })}
+              </div>
+              {favDiceConfig.length > 0 && (
+                <div className="flex flex-wrap gap-1 mt-2">
+                  {favDiceConfig.map((c, i) => {
+                    const dt = damageOf(c.damageType)
+                    return (
+                      <span key={i} className={`text-xs px-1.5 py-0.5 rounded border ${dt ? `${dt.bg} ${dt.border} ${dt.color}` : 'bg-zinc-800 border-zinc-700 ' + DICE_COLORS[c.type]}`}>
+                        {dt && `${dt.icon} `}{c.count}×{c.type}
+                      </span>
+                    )
+                  })}
+                </div>
+              )}
+            </div>
+
             <div className="flex justify-end gap-2">
-              <button onClick={() => setShowFavForm(false)} className="text-xs px-3 py-1.5 rounded-lg bg-zinc-700 text-zinc-400 hover:text-zinc-200">Abbrechen</button>
-              <button onClick={saveFavorite} disabled={!favForm.name.trim()} className="flex items-center gap-1.5 text-xs px-3 py-1.5 rounded-lg bg-amber-600 hover:bg-amber-500 disabled:opacity-40 text-white font-semibold">
+              <button onClick={() => { setShowFavForm(false); setFavDiceConfig([]) }} className="text-xs px-3 py-1.5 rounded-lg bg-zinc-700 text-zinc-400 hover:text-zinc-200">Abbrechen</button>
+              <button onClick={saveFavorite} disabled={!favName.trim() || favDiceConfig.length === 0} className="flex items-center gap-1.5 text-xs px-3 py-1.5 rounded-lg bg-amber-600 hover:bg-amber-500 disabled:opacity-40 text-white font-semibold">
                 <BookmarkCheck className="w-3.5 h-3.5" /> Speichern
               </button>
             </div>
@@ -499,14 +566,23 @@ export default function DicePage() {
         {favorites.length > 0 && (
           <div className="space-y-1.5">
             {favorites.map((fav) => {
-              const dt = damageOf(fav.damage_type)
+              // Support both old (damage_dice) and new (dice_config) format
+              const cfg: DiceConfig[] = fav.dice_config && fav.dice_config.length > 0
+                ? fav.dice_config
+                : fav.damage_dice ? parseDamageDice(fav.damage_dice).map(c => ({
+                    ...c, damageType: fav.damage_type ?? undefined
+                  })) : []
+              const firstDt = damageOf(cfg[0]?.damageType)
+              const diceLabel = cfg.map(c => {
+                const dt = damageOf(c.damageType)
+                return dt ? `${c.count}×${c.type} ${dt.icon}` : `${c.count}×${c.type}`
+              }).join(' + ')
               return (
                 <div key={fav.id} className="group flex items-center gap-2 px-3 py-2 rounded-lg bg-zinc-800/60 border border-zinc-700/60 hover:border-zinc-600 transition-colors">
                   <div className="flex-1 min-w-0">
                     <p className="text-sm font-semibold text-zinc-100">{fav.name}</p>
-                    <p className="text-[11px] text-zinc-500">
-                      Atk {fmtBonus(fav.attack_bonus)} · {fav.damage_dice}{fav.damage_bonus !== 0 ? fmtBonus(fav.damage_bonus) : ''}
-                      {dt && <span> · {dt.icon} {dt.label}</span>}
+                    <p className="text-[11px] text-zinc-500 truncate">
+                      Atk {fmtBonus(fav.attack_bonus)} · {diceLabel}{fav.damage_bonus !== 0 ? fmtBonus(fav.damage_bonus) : ''}
                     </p>
                   </div>
                   <button
@@ -516,7 +592,7 @@ export default function DicePage() {
                     Atk
                   </button>
                   <button
-                    onClick={() => quickDamage(fav.damage_dice, fav.damage_bonus, fav.damage_type ?? undefined, `${fav.name} Schaden`)}
+                    onClick={() => performRoll(cfg, fav.damage_bonus, `${fav.name} Schaden`)}
                     className="flex items-center gap-1 px-2 py-1 rounded bg-red-700/30 hover:bg-red-700/60 border border-red-500/60 text-[11px] font-bold text-red-200 transition-colors"
                   >
                     Dmg

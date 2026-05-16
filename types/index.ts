@@ -18,6 +18,10 @@ export interface User {
   email: string
   role: UserRole
   avatar_url?: string
+  display_name?: string
+  avatar_emoji?: string
+  theme?: string
+  accent_color?: string
   created_at: string
 }
 

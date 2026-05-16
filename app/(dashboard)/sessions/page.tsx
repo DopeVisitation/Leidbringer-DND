@@ -93,6 +93,7 @@ export default function SessionsPage() {
             key={session.id}
             session={session}
             currentUser={user}
+            onDeleted={refetch}
           />
         ))}
       </div>

@@ -18,6 +18,7 @@ import {
   BookText,
   MessageSquare,
   Tag,
+  Swords,
 } from 'lucide-react'
 import { cn } from '@/lib/utils'
 import { useAuth } from '@/lib/hooks/useAuth'
@@ -36,6 +37,7 @@ const navItems = [
   { href: '/rules', label: 'Grundregeln', icon: BookOpen },
   { href: '/chat', label: 'Chat', icon: MessageSquare },
   { href: '/prices', label: 'Item Preise', icon: Tag },
+  { href: '/battlemap', label: 'Spielfeld', icon: Swords },
 ]
 
 export function Sidebar() {
@@ -96,15 +98,26 @@ export function Sidebar() {
 
       {user && (
         <div className="p-3 border-t border-zinc-800">
-          <div className="flex items-center gap-3 px-3 py-2 mb-1">
-            <div className="w-8 h-8 rounded-full bg-zinc-700 flex items-center justify-center text-xs font-bold text-zinc-300">
-              {user.username?.[0]?.toUpperCase() ?? '?'}
+          <Link
+            href="/settings"
+            className={cn(
+              'flex items-center gap-3 px-3 py-2 rounded-lg text-sm font-medium transition-colors mb-1',
+              pathname === '/settings'
+                ? 'bg-amber-600/20 text-amber-400 border border-amber-600/30'
+                : 'text-zinc-400 hover:text-zinc-100 hover:bg-zinc-800'
+            )}
+          >
+            <div className="w-7 h-7 rounded-full bg-zinc-700 flex items-center justify-center text-base flex-shrink-0">
+              {user.avatar_emoji ?? user.username?.[0]?.toUpperCase() ?? '?'}
             </div>
             <div className="flex-1 min-w-0">
-              <p className="text-sm font-medium text-zinc-200 truncate">{user.username}</p>
-              <p className="text-xs text-zinc-500 truncate">{user.role === 'gm' ? 'Game Master' : 'Spieler'}</p>
+              <p className="text-sm font-medium text-zinc-200 truncate">
+                {user.display_name ?? user.username}
+              </p>
+              <p className="text-xs text-zinc-500 truncate">{user.role === 'gm' ? '⚔️ GM' : '🎲 Spieler'}</p>
             </div>
-          </div>
+            <Settings className="w-3.5 h-3.5 flex-shrink-0 opacity-50" />
+          </Link>
           <button
             onClick={signOut}
             className="w-full flex items-center gap-3 px-3 py-2 rounded-lg text-sm text-zinc-400 hover:text-zinc-100 hover:bg-zinc-800 transition-colors"
