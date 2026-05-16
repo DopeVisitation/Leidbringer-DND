@@ -129,7 +129,13 @@ export default function DicePage() {
   const [favDmgBonus, setFavDmgBonus] = useState('0')
   const [favDiceConfig, setFavDiceConfig] = useState<DiceConfig[]>([])
   const [favDamageType, setFavDamageType] = useState<string | null>(null)
+  const [gmRollsVisible, setGmRollsVisible] = useState(true)
   const logRef = useRef<HTMLDivElement>(null)
+
+  useEffect(() => {
+    const stored = localStorage.getItem('gm-rolls-visible')
+    if (stored !== null) setGmRollsVisible(stored === 'true')
+  }, [])
 
   useEffect(() => {
     loadRolls()
@@ -163,17 +169,24 @@ export default function DicePage() {
     if (data) setFavorites(data as DiceFavorite[])
   }
 
+  const [favSaveError, setFavSaveError] = useState<string | null>(null)
+
   const saveFavorite = async () => {
     if (!user || !favName.trim() || favDiceConfig.length === 0) return
-    await supabase.from('dice_favorites').insert({
+    setFavSaveError(null)
+    const { error } = await supabase.from('dice_favorites').insert({
       user_id: user.id,
       name: favName.trim(),
       attack_bonus: parseInt(favAtkBonus) || 0,
       damage_bonus: parseInt(favDmgBonus) || 0,
       dice_config: favDiceConfig,
-      damage_dice: null,
+      damage_dice: '',   // not null — empty string as fallback
       damage_type: null,
     })
+    if (error) {
+      setFavSaveError('Fehler beim Speichern: ' + error.message)
+      return
+    }
     setFavName(''); setFavAtkBonus('0'); setFavDmgBonus('0')
     setFavDiceConfig([]); setFavDamageType(null)
     setShowFavForm(false)
@@ -207,11 +220,14 @@ export default function DicePage() {
   }
 
   const loadRolls = async () => {
-    const { data } = await supabase
+    // Players only see visible rolls; GM sees all
+    const query = supabase
       .from('dice_rolls')
       .select('*, user:profiles(id,username,role)')
       .order('created_at', { ascending: false })
       .limit(50)
+    const finalQuery = user?.role === 'gm' ? query : query.eq('visible_to_players', true)
+    const { data } = await finalQuery
     if (data) setRolls(data as DiceRoll[])
   }
 
@@ -264,6 +280,7 @@ export default function DicePage() {
       results,
       total,
       label: lbl || null,
+      visible_to_players: user.role === 'gm' ? gmRollsVisible : true,
     })
     setRolling(false)
     setTimeout(() => logRef.current?.scrollTo({ top: 0, behavior: 'smooth' }), 100)
@@ -298,9 +315,24 @@ export default function DicePage() {
 
   return (
     <div className="p-4 md:p-6 max-w-3xl mx-auto space-y-6">
-      <div className="flex items-center gap-3">
+      <div className="flex items-center gap-3 flex-wrap">
         <Dices className="w-6 h-6 text-amber-400" />
         <h1 className="text-xl font-bold text-zinc-100">Würfelwürfe</h1>
+        {user?.role === 'gm' && (
+          <label className="ml-auto flex items-center gap-2 cursor-pointer px-3 py-1.5 rounded-lg bg-zinc-800 border border-zinc-700 text-xs text-zinc-400 hover:text-zinc-200 transition-colors">
+            <input
+              type="checkbox"
+              checked={gmRollsVisible}
+              onChange={e => {
+                const v = e.target.checked
+                setGmRollsVisible(v)
+                localStorage.setItem('gm-rolls-visible', String(v))
+              }}
+              className="w-3.5 h-3.5 accent-amber-500"
+            />
+            Würfe für Spieler sichtbar
+          </label>
+        )}
       </div>
 
       {/* ── Schnellwürfe aus Charakter ──────────────────────────────────── */}
@@ -550,8 +582,11 @@ export default function DicePage() {
               )}
             </div>
 
+            {favSaveError && (
+              <p className="text-xs text-red-400 bg-red-900/20 border border-red-700/40 rounded-lg px-2 py-1.5">{favSaveError}</p>
+            )}
             <div className="flex justify-end gap-2">
-              <button onClick={() => { setShowFavForm(false); setFavDiceConfig([]) }} className="text-xs px-3 py-1.5 rounded-lg bg-zinc-700 text-zinc-400 hover:text-zinc-200">Abbrechen</button>
+              <button onClick={() => { setShowFavForm(false); setFavDiceConfig([]); setFavSaveError(null) }} className="text-xs px-3 py-1.5 rounded-lg bg-zinc-700 text-zinc-400 hover:text-zinc-200">Abbrechen</button>
               <button onClick={saveFavorite} disabled={!favName.trim() || favDiceConfig.length === 0} className="flex items-center gap-1.5 text-xs px-3 py-1.5 rounded-lg bg-amber-600 hover:bg-amber-500 disabled:opacity-40 text-white font-semibold">
                 <BookmarkCheck className="w-3.5 h-3.5" /> Speichern
               </button>

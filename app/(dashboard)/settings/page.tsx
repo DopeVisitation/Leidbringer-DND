@@ -113,6 +113,20 @@ export default function SettingsPage() {
               </button>
             ))}
           </div>
+          {/* Custom emoji input */}
+          <div className="flex items-center gap-2 mt-1">
+            <span className="text-xs text-zinc-500">Eigenes Symbol:</span>
+            <input
+              type="text"
+              placeholder="Emoji eingeben…"
+              maxLength={4}
+              className="w-24 bg-zinc-800 border border-zinc-700 rounded-lg px-2 py-1.5 text-base text-center text-zinc-100 focus:outline-none focus:border-amber-500"
+              onChange={(e) => { if (e.target.value.trim()) setAvatarEmoji(e.target.value.trim()) }}
+            />
+            <div className="w-9 h-9 rounded-lg bg-amber-600/30 border border-amber-500 flex items-center justify-center text-xl">
+              {avatarEmoji}
+            </div>
+          </div>
         </div>
       </section>
 

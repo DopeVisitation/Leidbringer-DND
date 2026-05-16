@@ -21,8 +21,8 @@ const QUICK_CONDITIONS = [
   'Invisible', 'Prone', 'Stunned', 'Paralyzed',
 ]
 
-export function RulesSearch() {
-  const [query, setQuery] = useState('')
+export function RulesSearch({ initialQuery }: { initialQuery?: string }) {
+  const [query, setQuery] = useState(initialQuery ?? '')
   const [activeCategory, setActiveCategory] = useState<RuleCategory | 'all'>('all')
   const [openId, setOpenId] = useState<string | null>(null)
 
