@@ -7,6 +7,7 @@ import {
   ChevronDown, ChevronRight, Lock, Unlock, Check, RotateCcw,
   Flame, Move, Footprints, Skull, ArrowUp, ArrowDown,
   Timer, Play, Pause, SkipForward, SkipBack, Cloud, BookmarkCheck,
+  ZoomIn, ZoomOut, ChevronLeft, ChevronRight as ChevronRightIcon, Layers,
 } from 'lucide-react'
 import { createClient } from '@/lib/supabase/client'
 import { useAuth } from '@/lib/hooks/useAuth'
@@ -50,10 +51,23 @@ interface BattleToken {
   conditions: string[]; notes: string | null; stats: Record<string, number> | null
   is_hidden: boolean; favorite_actions: FavoriteAction[]
   player_user_id: string | null; token_size: TokenSize; movement_used: number
+  is_staged: boolean
 }
+
 interface DiceFavorite {
   id: string; name: string; attack_bonus: number; damage_bonus: number
   dice_config: DiceConfig[]; damage_dice?: string | null; damage_type?: string | null
+}
+
+interface DiceRollEntry {
+  id: string; user_id: string; label: string | null; total: number
+  results: number[][]; dice_config: DiceConfig[]; visible_to_players: boolean
+  created_at: string; username?: string
+}
+
+interface CombatLogEntry {
+  id: string; actor_name: string; action_type: string; description: string
+  is_gm_action: boolean; created_at: string; map_id: string
 }
 
 // ─── Constants ────────────────────────────────────────────────────────────────
@@ -304,7 +318,7 @@ function TokenModal({ initial, onSave, onClose, title }: {
               className="flex items-center gap-2 px-3 py-2 rounded-lg bg-zinc-800 border border-zinc-700 text-sm text-zinc-100 hover:border-zinc-500">
               <span className="text-xl">{form.icon}</span>
               <span className="text-zinc-400 text-xs">Symbol wählen</span>
-              {showIcons ? <ChevronDown className="w-4 h-4 text-zinc-500 ml-auto" /> : <ChevronRight className="w-4 h-4 text-zinc-500 ml-auto" />}
+              {showIcons ? <ChevronDown className="w-4 h-4 text-zinc-500 ml-auto" /> : <ChevronRightIcon className="w-4 h-4 text-zinc-500 ml-auto" />}
             </button>
             {showIcons && (
               <div className="mt-2 bg-zinc-900 rounded-xl p-3 border border-zinc-700">
@@ -611,7 +625,7 @@ function TokenPanel({ token, onUpdate, onDelete, onClose, onEdit, isGM, myFavori
         {canEdit && availConds.length > 0 && (
           <button onClick={() => setShowCondPicker(!showCondPicker)}
             className="text-[10px] text-zinc-600 hover:text-zinc-400 flex items-center gap-1">
-            <Plus className="w-3 h-3" /> Zustand hinzufügen
+            <span className="inline-block w-3 h-3 leading-none text-center">+</span> Zustand hinzufügen
           </button>
         )}
         {showCondPicker && (
@@ -683,6 +697,7 @@ export default function BattleMapPage() {
   const [tokens, setTokens] = useState<BattleToken[]>([])
   const [selectedToken, setSelectedToken] = useState<string | null>(null)
   const [activeTab, setActiveTab] = useState<'map' | 'tracker'>('map')
+  const [trackerSubTab, setTrackerSubTab] = useState<'initiative' | 'log'>('initiative')
   const [showMapForm, setShowMapForm] = useState(false)
   const [showAddModal, setShowAddModal] = useState(false)
   const [showMonsterLib, setShowMonsterLib] = useState(false)
@@ -696,6 +711,11 @@ export default function BattleMapPage() {
 
   // Fog of War
   const [fogMode, setFogMode] = useState(false)
+  const [fogBrushMode, setFogBrushMode] = useState<'paint' | 'erase'>('paint')
+  const fogPaintingRef = useRef(false)
+  const fogBrushCells = useRef<Set<string>>(new Set())
+  const fogBrushModeRef = useRef<'paint' | 'erase'>('paint')
+  useEffect(() => { fogBrushModeRef.current = fogBrushMode }, [fogBrushMode])
 
   // Movement
   const [moveMode, setMoveMode] = useState(false)
@@ -721,6 +741,27 @@ export default function BattleMapPage() {
   const [timerRemaining, setTimerRemaining] = useState(60)
   const [timerRunning, setTimerRunning] = useState(false)
   const timerIntervalRef = useRef<ReturnType<typeof setInterval> | null>(null)
+
+  // ── V17: Zoom / Pan ──
+  const [zoom, setZoom] = useState(1.0)
+  const [panX, setPanX] = useState(0)
+  const [panY, setPanY] = useState(0)
+  const zoomRef = useRef(1.0)
+  const viewportRef = useRef<HTMLDivElement>(null)
+  const isPanningRef = useRef(false)
+  const panStartRef = useRef({ x: 0, y: 0, px: 0, py: 0 })
+  useEffect(() => { zoomRef.current = zoom }, [zoom])
+
+  // ── V17: Staging ──
+  const [showStaging, setShowStaging] = useState(true)
+
+  // ── V17: Dice Wall ──
+  const [diceWallRolls, setDiceWallRolls] = useState<DiceRollEntry[]>([])
+  const [showDiceWall, setShowDiceWall] = useState(true)
+
+  // ── V17: Combat Log ──
+  const [combatLog, setCombatLog] = useState<CombatLogEntry[]>([])
+  const [logInput, setLogInput] = useState('')
 
   // Drag & Drop – all drag state in ref to avoid stale closures
   const dragStateRef = useRef<{
@@ -779,8 +820,15 @@ export default function BattleMapPage() {
     return buildPath({ col: token.col, row: token.row }, hoverCell, reachableCells)
   }, [moveMode, movingTokenId, hoverCell, reachableCells, tokens])
 
+  // ── V17: Staged / Map tokens ──
+  const stagedTokens = useMemo(() => tokens.filter(t => t.is_staged === true), [tokens])
+  const visibleTokensAll = useMemo(() =>
+    isGM ? tokens : tokens.filter(t => !t.is_hidden && !fogSet.has(`${t.col},${t.row}`)),
+    [tokens, isGM, fogSet]
+  )
+  const mapTokens = useMemo(() => visibleTokensAll.filter(t => !t.is_staged), [visibleTokensAll])
+
   // ── Timer ──
-  // Reset local timer when turn changes
   const prevTurnRef = useRef<number>(-1)
   useEffect(() => {
     const curTurn = initiativeData.current_turn
@@ -817,10 +865,76 @@ export default function BattleMapPage() {
     }
   }
 
-  // ── Global drag & drop handlers (registered once) ──
+  // ── V17: Wheel zoom (passive: false, registered via useEffect) ──
+  useEffect(() => {
+    const viewport = viewportRef.current
+    if (!viewport) return
+    const handler = (e: WheelEvent) => {
+      e.preventDefault()
+      const factor = e.deltaY < 0 ? 1.1 : 0.9
+      setZoom(z => {
+        const newZoom = Math.max(0.15, Math.min(5, z * factor))
+        const rect = viewport.getBoundingClientRect()
+        const cursorX = e.clientX - rect.left
+        const cursorY = e.clientY - rect.top
+        setPanX(px => cursorX - (cursorX - px) * (newZoom / z))
+        setPanY(py => cursorY - (cursorY - py) * (newZoom / z))
+        return newZoom
+      })
+    }
+    viewport.addEventListener('wheel', handler, { passive: false })
+    return () => viewport.removeEventListener('wheel', handler)
+  }, [])
+
+  // ── V17: Middle-click pan handler on viewport ──
+  const handleViewportMouseDown = (e: React.MouseEvent) => {
+    if (e.button === 1) {
+      e.preventDefault()
+      isPanningRef.current = true
+      panStartRef.current = { x: e.clientX, y: e.clientY, px: panX, py: panY }
+    }
+  }
+
+  // ── Global drag & drop / fog brush / pan handlers ──
   useEffect(() => {
     const THRESHOLD = 6
     const onMove = (e: MouseEvent) => {
+      // Middle-click pan
+      if (isPanningRef.current) {
+        const dx = e.clientX - panStartRef.current.x
+        const dy = e.clientY - panStartRef.current.y
+        setPanX(panStartRef.current.px + dx)
+        setPanY(panStartRef.current.py + dy)
+        return
+      }
+
+      // Fog brush
+      if (fogPaintingRef.current && mapRef.current) {
+        const map = activeMapRef.current
+        if (!map) return
+        const rect = mapRef.current.getBoundingClientRect()
+        const canvasX = (e.clientX - rect.left) / zoomRef.current
+        const canvasY = (e.clientY - rect.top) / zoomRef.current
+        const col = Math.floor((canvasX - (map.grid_offset_x ?? 0)) / map.cell_size)
+        const row = Math.floor((canvasY - (map.grid_offset_y ?? 0)) / map.cell_size)
+        const key = `${col},${row}`
+        if (col >= 0 && row >= 0 && col < map.grid_cols && row < map.grid_rows && !fogBrushCells.current.has(key)) {
+          fogBrushCells.current.add(key)
+          setActiveMap(prev => {
+            if (!prev) return prev
+            const fc = prev.fog_cells ?? []
+            if (fogBrushModeRef.current === 'paint') {
+              if (!fc.some(f => f.col === col && f.row === row)) return { ...prev, fog_cells: [...fc, { col, row }] }
+            } else {
+              return { ...prev, fog_cells: fc.filter(f => !(f.col === col && f.row === row)) }
+            }
+            return prev
+          })
+        }
+        return
+      }
+
+      // Token drag
       const ds = dragStateRef.current
       if (!ds) return
       if (!ds.dragging) {
@@ -835,15 +949,38 @@ export default function BattleMapPage() {
       const map = activeMapRef.current
       if (!map || !mapRef.current) return
       const rect = mapRef.current.getBoundingClientRect()
-      const col = Math.floor((e.clientX - rect.left - (map.grid_offset_x ?? 0)) / map.cell_size)
-      const row = Math.floor((e.clientY - rect.top - (map.grid_offset_y ?? 0)) / map.cell_size)
+      const canvasX = (e.clientX - rect.left) / zoomRef.current
+      const canvasY = (e.clientY - rect.top) / zoomRef.current
+      const col = Math.floor((canvasX - (map.grid_offset_x ?? 0)) / map.cell_size)
+      const row = Math.floor((canvasY - (map.grid_offset_y ?? 0)) / map.cell_size)
       const valid = col >= 0 && row >= 0 && col < map.grid_cols && row < map.grid_rows
       ds.hoverCol = valid ? col : null
       ds.hoverRow = valid ? row : null
       setDragRender({ tokenId: ds.tokenId, hoverCell: valid ? { col, row } : null })
     }
 
-    const onUp = async () => {
+    const onUp = async (e: MouseEvent) => {
+      // Middle-click pan end
+      if (isPanningRef.current) {
+        isPanningRef.current = false
+        return
+      }
+
+      // Fog brush end – save to DB
+      if (fogPaintingRef.current) {
+        fogPaintingRef.current = false
+        const map = activeMapRef.current
+        if (map) {
+          setActiveMap(prev => {
+            if (prev) {
+              supabase.from('battle_maps').update({ fog_cells: prev.fog_cells }).eq('id', prev.id)
+            }
+            return prev
+          })
+        }
+        return
+      }
+
       const ds = dragStateRef.current
       if (!ds) return
       if (!ds.dragging) {
@@ -855,7 +992,6 @@ export default function BattleMapPage() {
         const allTokens = tokensRef.current
         const token = allTokens.find(t => t.id === tokenId)
 
-        // Movement budget enforcement for non-GM players
         if (!isGMRef.current && token && token.speed !== null && map) {
           const fpc = map.feet_per_cell ?? 5
           const distCells = Math.abs(col - token.col) + Math.abs(row - token.row)
@@ -864,7 +1000,6 @@ export default function BattleMapPage() {
           if (distFeet > remaining) {
             dragStateRef.current = null; setDragRender(null); return
           }
-          // Deduct movement cost
           const patch = { col, row, movement_used: (token.movement_used ?? 0) + distFeet }
           await supabase.from('battle_tokens').update(patch).eq('id', tokenId)
           setTokens(prev => prev.map(t => t.id === tokenId ? { ...t, ...patch } : t))
@@ -979,6 +1114,7 @@ export default function BattleMapPage() {
     setTokens((data ?? []).map((t: any) => ({
       ...t, conditions: t.conditions ?? [], favorite_actions: t.favorite_actions ?? [],
       token_size: t.token_size ?? 'medium', movement_used: t.movement_used ?? 0,
+      is_staged: t.is_staged ?? false,
     })))
   }, [supabase])
 
@@ -988,7 +1124,38 @@ export default function BattleMapPage() {
     setMyFavorites((data ?? []) as DiceFavorite[])
   }, [user, supabase])
 
-  // Realtime for battle_maps (syncs initiative data, fog, etc. to all clients)
+  // ── V17: Load dice wall rolls ──
+  const loadDiceWall = useCallback(async () => {
+    const { data } = await supabase
+      .from('dice_rolls')
+      .select('*')
+      .order('created_at', { ascending: false })
+      .limit(7)
+    setDiceWallRolls((data ?? []) as DiceRollEntry[])
+  }, [supabase])
+
+  // ── V17: Load combat log ──
+  const loadCombatLog = useCallback(async (mapId: string) => {
+    const { data } = await supabase
+      .from('combat_log')
+      .select('*')
+      .eq('map_id', mapId)
+      .order('created_at', { ascending: false })
+      .limit(100)
+    setCombatLog((data ?? []) as CombatLogEntry[])
+  }, [supabase])
+
+  // ── V17: Add combat log entry ──
+  const addLogEntry = useCallback(async (
+    mapId: string, actorName: string, actionType: string, description: string, isGmAction: boolean
+  ) => {
+    await supabase.from('combat_log').insert({
+      map_id: mapId, actor_name: actorName, action_type: actionType,
+      description, is_gm_action: isGmAction,
+    })
+  }, [supabase])
+
+  // Realtime for battle_maps
   useEffect(() => {
     loadMaps()
     const ch = supabase.channel('battle_maps_rt')
@@ -1002,12 +1169,26 @@ export default function BattleMapPage() {
   useEffect(() => {
     if (!activeMap) return
     loadTokens(activeMap.id)
+    loadCombatLog(activeMap.id)
     const channel = supabase.channel('battle_' + activeMap.id)
       .on('postgres_changes', { event: '*', schema: 'public', table: 'battle_tokens', filter: `map_id=eq.${activeMap.id}` },
         () => loadTokens(activeMap.id))
       .subscribe()
-    return () => { supabase.removeChannel(channel) }
-  }, [activeMap?.id, loadTokens, supabase])
+    const logChannel = supabase.channel('combat_log_' + activeMap.id)
+      .on('postgres_changes', { event: 'INSERT', schema: 'public', table: 'combat_log', filter: `map_id=eq.${activeMap.id}` },
+        () => loadCombatLog(activeMap.id))
+      .subscribe()
+    return () => { supabase.removeChannel(channel); supabase.removeChannel(logChannel) }
+  }, [activeMap?.id, loadTokens, loadCombatLog, supabase])
+
+  // ── V17: Dice wall realtime ──
+  useEffect(() => {
+    loadDiceWall()
+    const ch = supabase.channel('dice_rolls_wall')
+      .on('postgres_changes', { event: 'INSERT', schema: 'public', table: 'dice_rolls' }, () => loadDiceWall())
+      .subscribe()
+    return () => { supabase.removeChannel(ch) }
+  }, [loadDiceWall, supabase])
 
   // ── Map CRUD ──
   const createMap = async () => {
@@ -1037,6 +1218,8 @@ export default function BattleMapPage() {
   // ── Token CRUD ──
   const addTokenFromForm = async (form: typeof BLANK_TOKEN_FORM, override?: { player_user_id?: string }) => {
     if (!activeMap || !user) return
+    const isPlayer = form.token_type === 'player' && override?.player_user_id != null
+    const isStaged = isGM && !isPlayer // GM-added go to staging; player "Meine Figur" goes directly to map
     await supabase.from('battle_tokens').insert({
       map_id: activeMap.id, token_type: form.token_type,
       name: form.name, icon: form.icon, col: 0, row: 0,
@@ -1049,6 +1232,7 @@ export default function BattleMapPage() {
       is_hidden: false, favorite_actions: [],
       player_user_id: override?.player_user_id ?? null,
       token_size: form.token_size, movement_used: 0,
+      is_staged: isStaged,
     })
     loadTokens(activeMap.id); setShowAddModal(false); setShowMonsterLib(false)
   }
@@ -1062,7 +1246,7 @@ export default function BattleMapPage() {
       speed: m.speed, initiative: 0, challenge_rating: m.cr,
       conditions: [], notes: m.notes || null, stats: m.stats,
       is_hidden: false, favorite_actions: [], player_user_id: null,
-      token_size: 'medium', movement_used: 0,
+      token_size: 'medium', movement_used: 0, is_staged: true,
     }).then(() => loadTokens(activeMap.id))
     setShowMonsterLib(false)
   }
@@ -1070,6 +1254,18 @@ export default function BattleMapPage() {
   const updateToken = async (id: string, patch: Partial<BattleToken>) => {
     await supabase.from('battle_tokens').update(patch).eq('id', id)
     setTokens(prev => prev.map(t => t.id === id ? { ...t, ...patch } : t))
+  }
+
+  // ── V17: Deploy token from staging ──
+  const deployToken = async (id: string) => {
+    if (!activeMap) return
+    const centerCol = Math.floor(activeMap.grid_cols / 2)
+    const centerRow = Math.floor(activeMap.grid_rows / 2)
+    await updateToken(id, { is_staged: false, col: centerCol, row: centerRow })
+    const token = tokens.find(t => t.id === id)
+    if (token) {
+      addLogEntry(activeMap.id, token.name, 'move', `${token.name} wurde auf das Spielfeld gebracht`, true)
+    }
   }
 
   const saveEditedToken = async (form: typeof BLANK_TOKEN_FORM) => {
@@ -1114,6 +1310,7 @@ export default function BattleMapPage() {
 
   // ── Token drag handler ──
   const handleTokenMouseDown = useCallback((e: React.MouseEvent, token: BattleToken) => {
+    if (e.button !== 0) return
     const canEdit = isGM || token.player_user_id === user?.id
     if (!canEdit || terrainMode || effectMode || moveMode || fogMode) return
     e.preventDefault(); e.stopPropagation()
@@ -1210,7 +1407,6 @@ export default function BattleMapPage() {
     setActiveMap(prev => prev ? { ...prev, initiative_data: newData } : prev)
     await supabase.from('battle_maps').update({ initiative_data: newData }).eq('id', activeMap.id)
     setTimerRemaining(initiativeData.timer_seconds)
-    if (timerRunning) { /* timer already running, just reset */ }
   }
 
   const prevTurnFn = async () => {
@@ -1235,16 +1431,42 @@ export default function BattleMapPage() {
   const getCellFromEvent = (e: React.MouseEvent) => {
     if (!activeMap || !mapRef.current) return null
     const rect = mapRef.current.getBoundingClientRect()
-    const col = Math.floor((e.clientX - rect.left - ox) / cs)
-    const row = Math.floor((e.clientY - rect.top - oy) / cs)
+    const canvasX = (e.clientX - rect.left) / zoom
+    const canvasY = (e.clientY - rect.top) / zoom
+    const col = Math.floor((canvasX - ox) / cs)
+    const row = Math.floor((canvasY - oy) / cs)
     if (col < 0 || row < 0 || col >= activeMap.grid_cols || row >= activeMap.grid_rows) return null
     return { col, row }
   }
 
+  // ── V17: Fog brush mousedown on canvas ──
+  const handleMapMouseDown = (e: React.MouseEvent) => {
+    if (e.button !== 0) return
+    if (fogMode && isGM) {
+      e.preventDefault()
+      fogPaintingRef.current = true
+      fogBrushCells.current = new Set()
+      const cell = getCellFromEvent(e)
+      if (cell) {
+        const key = `${cell.col},${cell.row}`
+        fogBrushCells.current.add(key)
+        const fc = activeMap?.fog_cells ?? []
+        if (fogBrushModeRef.current === 'paint') {
+          if (!fc.some(f => f.col === cell.col && f.row === cell.row))
+            updateMap({ fog_cells: [...fc, cell] })
+        } else {
+          updateMap({ fog_cells: fc.filter(f => !(f.col === cell.col && f.row === cell.row)) })
+        }
+      }
+    }
+  }
+
   const handleGridClick = (e: React.MouseEvent<HTMLDivElement>) => {
+    if (e.button !== 0) return
     if (dragRender?.tokenId) return
+    // Fog brush is handled by mousedown/mousemove, not click
+    if (fogMode && isGM) return
     const cell = getCellFromEvent(e); if (!cell) return
-    if (fogMode && isGM) { toggleFog(cell.col, cell.row); return }
     if (terrainMode && isGM) { toggleTerrain(cell.col, cell.row); return }
     if (effectMode) {
       const et = EFFECT_TYPES.find(x => x.id === effectMode)
@@ -1256,7 +1478,7 @@ export default function BattleMapPage() {
       if (reachableCells.has(`${cell.col},${cell.row}`)) setMoveTarget(cell)
       return
     }
-    const clickedToken = visibleTokens.find(t => {
+    const clickedToken = mapTokens.find(t => {
       const span = Math.max(1, Math.ceil(getSizeSpan(t.token_size || 'medium')))
       return cell.col >= t.col && cell.col < t.col + span && cell.row >= t.row && cell.row < t.row + span
     })
@@ -1281,7 +1503,6 @@ export default function BattleMapPage() {
   }
 
   const sel = selectedToken ? tokens.find(t => t.id === selectedToken) ?? null : null
-  const visibleTokens = isGM ? tokens : tokens.filter(t => !t.is_hidden && !fogSet.has(`${t.col},${t.row}`))
   const movingToken = movingTokenId ? tokens.find(t => t.id === movingTokenId) : null
   const concentratingTokens = tokens.filter(t => t.conditions.includes('Konzentration'))
   const playerTokens = tokens.filter(t => t.token_type === 'player')
@@ -1360,10 +1581,8 @@ export default function BattleMapPage() {
   const timerPct = initiativeData.timer_seconds > 0 ? timerRemaining / initiativeData.timer_seconds : 1
   const timerColor = timerPct > 0.5 ? '#4ade80' : timerPct > 0.25 ? '#facc15' : '#f87171'
 
-  // ── Plus icon for conditions ──
-  function Plus({ className }: { className?: string }) {
-    return <svg className={className} viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth={2}><line x1={12} y1={5} x2={12} y2={19}/><line x1={5} y1={12} x2={19} y2={12}/></svg>
-  }
+  // ── V17: Filtered dice wall ──
+  const filteredDiceWall = diceWallRolls.filter(r => isGM || r.visible_to_players)
 
   return (
     <div className="flex flex-col h-[calc(100vh-4rem)] md:h-screen overflow-hidden bg-zinc-950">
@@ -1385,7 +1604,7 @@ export default function BattleMapPage() {
             <>
               <button onClick={() => setShowMapForm(!showMapForm)}
                 className="flex items-center gap-1 px-2 py-1.5 rounded bg-zinc-800/80 border border-zinc-700/60 text-xs text-zinc-400 hover:text-zinc-200 hover:border-zinc-500">
-                <Plus className="w-3 h-3" /> Karte
+                <span className="text-xs leading-none">+</span> Karte
               </button>
               {activeMap && (
                 <>
@@ -1402,14 +1621,13 @@ export default function BattleMapPage() {
                     className={`flex items-center gap-1 px-2 py-1.5 rounded border text-xs transition-colors ${terrainMode ? 'bg-orange-950/40 border-orange-700/60 text-orange-300' : 'bg-zinc-800/80 border-zinc-700/60 text-zinc-500 hover:text-zinc-300'}`}>
                     Gelände
                   </button>
-                  {/* Fog of War Button */}
                   <button onClick={() => { setFogMode(!fogMode); setTerrainMode(false); setEffectMode(null) }}
                     className={`flex items-center gap-1 px-2 py-1.5 rounded border text-xs transition-colors ${fogMode ? 'bg-slate-700/60 border-slate-500/60 text-slate-200' : 'bg-zinc-800/80 border-zinc-700/60 text-zinc-500 hover:text-zinc-300'}`}>
                     <Cloud className="w-3 h-3" /> Nebel
                   </button>
                   <button onClick={() => setShowAddModal(true)}
                     className="flex items-center gap-1 px-2 py-1.5 rounded bg-zinc-700/60 border border-zinc-600/60 text-xs text-zinc-300 hover:bg-zinc-700">
-                    <Plus className="w-3 h-3" /> Token
+                    <span className="text-xs leading-none">+</span> Token
                   </button>
                   <button onClick={() => setShowMonsterLib(!showMonsterLib)}
                     className="flex items-center gap-1 px-2 py-1.5 rounded bg-red-950/40 border border-red-800/50 text-xs text-red-300 hover:bg-red-950/60">
@@ -1439,8 +1657,27 @@ export default function BattleMapPage() {
           {!isGM && activeMap && !myToken && (
             <button onClick={addMyPlayerToken}
               className="flex items-center gap-1 px-2 py-1.5 rounded bg-sky-950/40 border border-sky-800/50 text-xs text-sky-300 hover:bg-sky-950/60">
-              <Plus className="w-3 h-3" /> Meine Figur
+              <span className="text-xs leading-none">+</span> Meine Figur
             </button>
+          )}
+
+          {/* ── V17: Zoom controls ── */}
+          {activeMap && activeTab === 'map' && (
+            <div className="flex items-center gap-1 ml-1">
+              <button onClick={() => setZoom(z => Math.min(5, z * 1.2))}
+                className="p-1.5 rounded bg-zinc-800/80 border border-zinc-700/60 text-zinc-500 hover:text-zinc-300" title="Zoom +">
+                <ZoomIn className="w-3 h-3" />
+              </button>
+              <span className="text-[10px] text-zinc-600 tabular-nums w-8 text-center">{Math.round(zoom * 100)}%</span>
+              <button onClick={() => setZoom(z => Math.max(0.15, z * 0.83))}
+                className="p-1.5 rounded bg-zinc-800/80 border border-zinc-700/60 text-zinc-500 hover:text-zinc-300" title="Zoom -">
+                <ZoomOut className="w-3 h-3" />
+              </button>
+              <button onClick={() => { setZoom(1); setPanX(0); setPanY(0) }}
+                className="px-2 py-1 rounded bg-zinc-800/80 border border-zinc-700/60 text-[10px] text-zinc-500 hover:text-zinc-300" title="Zoom zurücksetzen">
+                1:1
+              </button>
+            </div>
           )}
 
           {isGM && activeMap && (
@@ -1503,10 +1740,21 @@ export default function BattleMapPage() {
 
       {/* ── Fog Controls (when fog mode active) ── */}
       {fogMode && isGM && activeMap && (
-        <div className="flex-shrink-0 px-4 py-2 bg-slate-900/80 border-b border-slate-700/60 flex items-center gap-3">
+        <div className="flex-shrink-0 px-4 py-2 bg-slate-900/80 border-b border-slate-700/60 flex items-center gap-3 flex-wrap">
           <Cloud className="w-4 h-4 text-slate-400" />
           <span className="text-xs text-slate-300 font-semibold">Nebelkrieg</span>
-          <span className="text-xs text-slate-500">Klicke Felder zum Hinzufügen/Entfernen</span>
+          {/* V17: Pinsel/Radierer toggle */}
+          <div className="flex rounded overflow-hidden border border-slate-700/60">
+            <button onClick={() => setFogBrushMode('paint')}
+              className={`px-2.5 py-1 text-xs transition-colors ${fogBrushMode === 'paint' ? 'bg-slate-600 text-slate-100' : 'bg-slate-900/60 text-slate-500 hover:text-slate-300'}`}>
+              Pinsel
+            </button>
+            <button onClick={() => setFogBrushMode('erase')}
+              className={`px-2.5 py-1 text-xs transition-colors ${fogBrushMode === 'erase' ? 'bg-slate-600 text-slate-100' : 'bg-slate-900/60 text-slate-500 hover:text-slate-300'}`}>
+              Radierer
+            </button>
+          </div>
+          <span className="text-xs text-slate-500">Ziehe über Felder zum Malen</span>
           <div className="ml-auto flex gap-2">
             <button onClick={fillFog}
               className="px-2.5 py-1 rounded bg-slate-700/60 border border-slate-600/60 text-xs text-slate-300 hover:bg-slate-700">
@@ -1717,7 +1965,7 @@ export default function BattleMapPage() {
             {isGM && (
               <button onClick={() => setShowMapForm(true)}
                 className="flex items-center gap-2 px-4 py-2 rounded bg-zinc-800 border border-zinc-700 text-sm text-zinc-300 hover:text-zinc-100">
-                <Plus className="w-4 h-4" /> Karte erstellen
+                <span>+</span> Karte erstellen
               </button>
             )}
           </div>
@@ -1725,217 +1973,355 @@ export default function BattleMapPage() {
           /* ── Initiative Tracker Tab ── */
           <div className="flex-1 overflow-y-auto p-4 space-y-3">
 
-            {/* ── Timer & Controls ── */}
-            <div className="bg-zinc-900 border border-zinc-800 rounded-xl p-4 space-y-3">
-              {/* Round + Active Token */}
-              <div className="flex items-center justify-between">
-                <div>
-                  <p className="text-xs text-zinc-500 uppercase font-semibold">Runde</p>
-                  <p className="text-3xl font-black text-amber-400 leading-none">{initiativeData.round}</p>
-                </div>
-                {activeTurnToken && (
-                  <div className="flex items-center gap-2 px-3 py-2 rounded-lg bg-amber-900/20 border border-amber-700/40">
-                    <span className="text-lg">{activeTurnToken.icon}</span>
+            {/* ── Sub-tab header ── */}
+            <div className="flex rounded-lg overflow-hidden border border-zinc-800">
+              <button onClick={() => setTrackerSubTab('initiative')}
+                className={`flex-1 px-3 py-2 text-xs font-semibold transition-colors ${trackerSubTab === 'initiative' ? 'bg-zinc-800 text-zinc-100' : 'bg-zinc-900/60 text-zinc-500 hover:text-zinc-300'}`}>
+                Initiative
+              </button>
+              <button onClick={() => setTrackerSubTab('log')}
+                className={`flex-1 px-3 py-2 text-xs font-semibold transition-colors ${trackerSubTab === 'log' ? 'bg-zinc-800 text-zinc-100' : 'bg-zinc-900/60 text-zinc-500 hover:text-zinc-300'}`}>
+                Kampflog
+                {combatLog.length > 0 && <span className="ml-1 text-[10px] text-zinc-600">({combatLog.length})</span>}
+              </button>
+            </div>
+
+            {trackerSubTab === 'initiative' ? (
+              <>
+                {/* ── Timer & Controls ── */}
+                <div className="bg-zinc-900 border border-zinc-800 rounded-xl p-4 space-y-3">
+                  <div className="flex items-center justify-between">
                     <div>
-                      <p className="text-xs text-amber-400 font-semibold">Am Zug</p>
-                      <p className="text-sm font-bold text-zinc-100">{activeTurnToken.name}</p>
+                      <p className="text-xs text-zinc-500 uppercase font-semibold">Runde</p>
+                      <p className="text-3xl font-black text-amber-400 leading-none">{initiativeData.round}</p>
+                    </div>
+                    {activeTurnToken && (
+                      <div className="flex items-center gap-2 px-3 py-2 rounded-lg bg-amber-900/20 border border-amber-700/40">
+                        <span className="text-lg">{activeTurnToken.icon}</span>
+                        <div>
+                          <p className="text-xs text-amber-400 font-semibold">Am Zug</p>
+                          <p className="text-sm font-bold text-zinc-100">{activeTurnToken.name}</p>
+                        </div>
+                      </div>
+                    )}
+                    {sortedInitiative.length === 0 && (
+                      <p className="text-xs text-zinc-600">Keine Token – füge Figuren zur Karte hinzu</p>
+                    )}
+                  </div>
+
+                  {/* Timer */}
+                  <div className="space-y-1.5">
+                    <div className="flex items-center justify-between">
+                      <div className="flex items-center gap-2">
+                        <Timer className="w-3.5 h-3.5 text-zinc-500" />
+                        <span className="text-xs text-zinc-400">Zugtimer</span>
+                      </div>
+                      <span className="text-xl font-black tabular-nums" style={{ color: timerColor }}>
+                        {timerMin}:{timerSec}
+                      </span>
+                    </div>
+                    <div className="h-1.5 rounded-full bg-zinc-800">
+                      <div className="h-full rounded-full transition-all duration-1000"
+                        style={{ width: `${timerPct * 100}%`, backgroundColor: timerColor }} />
+                    </div>
+                    <div className="flex gap-2">
+                      <button onClick={toggleTimer}
+                        className={`flex-1 flex items-center justify-center gap-1.5 py-1.5 rounded-lg border text-xs font-semibold transition-colors ${
+                          timerRunning
+                            ? 'bg-amber-900/30 border-amber-700/50 text-amber-300 hover:bg-amber-900/50'
+                            : 'bg-zinc-800 border-zinc-700 text-zinc-400 hover:text-zinc-200'
+                        }`}>
+                        {timerRunning ? <><Pause className="w-3.5 h-3.5" /> Pause</> : <><Play className="w-3.5 h-3.5" /> Start</>}
+                      </button>
+                      <button onClick={() => setTimerRemaining(initiativeData.timer_seconds)}
+                        className="px-3 py-1.5 rounded-lg border border-zinc-700 bg-zinc-800 text-xs text-zinc-500 hover:text-zinc-300">
+                        <RotateCcw className="w-3 h-3" />
+                      </button>
+                      <div className="flex items-center gap-1">
+                        <span className="text-xs text-zinc-600">Limit:</span>
+                        <select className="bg-zinc-800 border border-zinc-700 rounded px-1.5 py-1 text-xs text-zinc-300 focus:outline-none"
+                          value={initiativeData.timer_seconds}
+                          onChange={e => updateMap({ initiative_data: { ...initiativeData, timer_seconds: parseInt(e.target.value) } })}>
+                          {[30,60,90,120,180,300].map(s => <option key={s} value={s}>{s}s</option>)}
+                        </select>
+                      </div>
+                    </div>
+                  </div>
+
+                  {/* Navigation buttons */}
+                  <div className="flex gap-2">
+                    <button onClick={prevTurnFn}
+                      className="flex items-center gap-1 px-3 py-2 rounded-lg bg-zinc-800 border border-zinc-700 text-xs text-zinc-400 hover:text-zinc-200">
+                      <SkipBack className="w-3.5 h-3.5" /> Zurück
+                    </button>
+                    <button onClick={advanceTurn}
+                      className="flex-1 flex items-center justify-center gap-1.5 py-2 rounded-lg bg-amber-800 hover:bg-amber-700 border border-amber-600/60 text-xs font-bold text-amber-100">
+                      <SkipForward className="w-3.5 h-3.5" /> Nächster Zug
+                    </button>
+                    <button onClick={resetInitiative}
+                      className="flex items-center gap-1 px-3 py-2 rounded-lg bg-zinc-800 border border-zinc-700 text-xs text-zinc-400 hover:text-zinc-200" title="Kampf zurücksetzen">
+                      <RotateCcw className="w-3.5 h-3.5" />
+                    </button>
+                  </div>
+                </div>
+
+                {/* ── Party HP Overview ── */}
+                {playerTokens.length > 0 && (
+                  <div className="bg-zinc-900 border border-zinc-800 rounded-xl p-3">
+                    <p className="text-[10px] uppercase font-semibold text-zinc-600 mb-2 flex items-center gap-1">
+                      <Heart className="w-3 h-3 text-red-700" /> Gruppen-HP
+                    </p>
+                    <div className="space-y-1.5">
+                      {playerTokens.map(t => {
+                        const pct = t.max_hp ? Math.max(0, Math.min(1, (t.current_hp ?? 0) / t.max_hp)) : null
+                        const color = pct === null ? '#52525b' : pct > 0.6 ? '#4ade80' : pct > 0.3 ? '#facc15' : '#f87171'
+                        return (
+                          <div key={t.id}>
+                            <div className="flex items-center justify-between text-xs mb-0.5">
+                              <span className="text-zinc-300 flex items-center gap-1">
+                                <span>{t.icon}</span> {t.name}
+                              </span>
+                              <span className="font-bold tabular-nums" style={{ color }}>
+                                {t.current_hp ?? '?'} / {t.max_hp ?? '?'}
+                              </span>
+                            </div>
+                            {pct !== null && (
+                              <div className="h-1 rounded-full bg-zinc-800">
+                                <div className="h-full rounded-full transition-all" style={{ width: `${pct * 100}%`, backgroundColor: color }} />
+                              </div>
+                            )}
+                          </div>
+                        )
+                      })}
                     </div>
                   </div>
                 )}
-                {sortedInitiative.length === 0 && (
-                  <p className="text-xs text-zinc-600">Keine Token – füge Figuren zur Karte hinzu</p>
-                )}
-              </div>
 
-              {/* Timer */}
-              <div className="space-y-1.5">
-                <div className="flex items-center justify-between">
-                  <div className="flex items-center gap-2">
-                    <Timer className="w-3.5 h-3.5 text-zinc-500" />
-                    <span className="text-xs text-zinc-400">Zugtimer</span>
+                {/* ── Initiative Order ── */}
+                <div className="space-y-1">
+                  <div className="flex items-center justify-between mb-1">
+                    <p className="text-xs font-semibold text-zinc-500">{tokens.length} Figuren · nach Initiative sortiert</p>
+                    <button onClick={resetAllMovement}
+                      className="flex items-center gap-1 px-2 py-1 rounded bg-zinc-800 border border-zinc-700 text-xs text-zinc-500 hover:text-zinc-300">
+                      <RotateCcw className="w-3 h-3" /> Bewegung reset
+                    </button>
                   </div>
-                  <span className="text-xl font-black tabular-nums" style={{ color: timerColor }}>
-                    {timerMin}:{timerSec}
-                  </span>
-                </div>
-                <div className="h-1.5 rounded-full bg-zinc-800">
-                  <div className="h-full rounded-full transition-all duration-1000"
-                    style={{ width: `${timerPct * 100}%`, backgroundColor: timerColor }} />
-                </div>
-                <div className="flex gap-2">
-                  <button onClick={toggleTimer}
-                    className={`flex-1 flex items-center justify-center gap-1.5 py-1.5 rounded-lg border text-xs font-semibold transition-colors ${
-                      timerRunning
-                        ? 'bg-amber-900/30 border-amber-700/50 text-amber-300 hover:bg-amber-900/50'
-                        : 'bg-zinc-800 border-zinc-700 text-zinc-400 hover:text-zinc-200'
-                    }`}>
-                    {timerRunning ? <><Pause className="w-3.5 h-3.5" /> Pause</> : <><Play className="w-3.5 h-3.5" /> Start</>}
-                  </button>
-                  <button onClick={() => setTimerRemaining(initiativeData.timer_seconds)}
-                    className="px-3 py-1.5 rounded-lg border border-zinc-700 bg-zinc-800 text-xs text-zinc-500 hover:text-zinc-300">
-                    <RotateCcw className="w-3 h-3" />
-                  </button>
-                  <div className="flex items-center gap-1">
-                    <span className="text-xs text-zinc-600">Limit:</span>
-                    <select className="bg-zinc-800 border border-zinc-700 rounded px-1.5 py-1 text-xs text-zinc-300 focus:outline-none"
-                      value={initiativeData.timer_seconds}
-                      onChange={e => updateMap({ initiative_data: { ...initiativeData, timer_seconds: parseInt(e.target.value) } })}>
-                      {[30,60,90,120,180,300].map(s => <option key={s} value={s}>{s}s</option>)}
-                    </select>
-                  </div>
-                </div>
-              </div>
-
-              {/* Navigation buttons */}
-              <div className="flex gap-2">
-                <button onClick={prevTurnFn}
-                  className="flex items-center gap-1 px-3 py-2 rounded-lg bg-zinc-800 border border-zinc-700 text-xs text-zinc-400 hover:text-zinc-200">
-                  <SkipBack className="w-3.5 h-3.5" /> Zurück
-                </button>
-                <button onClick={advanceTurn}
-                  className="flex-1 flex items-center justify-center gap-1.5 py-2 rounded-lg bg-amber-800 hover:bg-amber-700 border border-amber-600/60 text-xs font-bold text-amber-100">
-                  <SkipForward className="w-3.5 h-3.5" /> Nächster Zug
-                </button>
-                <button onClick={resetInitiative}
-                  className="flex items-center gap-1 px-3 py-2 rounded-lg bg-zinc-800 border border-zinc-700 text-xs text-zinc-400 hover:text-zinc-200" title="Kampf zurücksetzen">
-                  <RotateCcw className="w-3.5 h-3.5" />
-                </button>
-              </div>
-            </div>
-
-            {/* ── Party HP Overview ── */}
-            {playerTokens.length > 0 && (
-              <div className="bg-zinc-900 border border-zinc-800 rounded-xl p-3">
-                <p className="text-[10px] uppercase font-semibold text-zinc-600 mb-2 flex items-center gap-1">
-                  <Heart className="w-3 h-3 text-red-700" /> Gruppen-HP
-                </p>
-                <div className="space-y-1.5">
-                  {playerTokens.map(t => {
-                    const pct = t.max_hp ? Math.max(0, Math.min(1, (t.current_hp ?? 0) / t.max_hp)) : null
-                    const color = pct === null ? '#52525b' : pct > 0.6 ? '#4ade80' : pct > 0.3 ? '#facc15' : '#f87171'
+                  {tokens.length === 0 && <p className="text-sm text-zinc-700 text-center py-8">Keine Token auf der Karte.</p>}
+                  {sortedInitiative.map((t, idx) => {
+                    const activeConds = CONDITIONS.filter(c => t.conditions.includes(c.id))
+                    const remainFt = (t.speed ?? 0) - (t.movement_used ?? 0)
+                    const isActive = activeTurnToken?.id === t.id
                     return (
-                      <div key={t.id}>
-                        <div className="flex items-center justify-between text-xs mb-0.5">
-                          <span className="text-zinc-300 flex items-center gap-1">
-                            <span>{t.icon}</span> {t.name}
-                          </span>
-                          <span className="font-bold tabular-nums" style={{ color }}>
-                            {t.current_hp ?? '?'} / {t.max_hp ?? '?'}
-                          </span>
+                      <div key={t.id} onClick={() => setSelectedToken(t.id === selectedToken ? null : t.id)}
+                        className={`flex items-center gap-3 px-3 py-2.5 rounded-lg border cursor-pointer transition-all ${
+                          isActive
+                            ? 'border-amber-600/70 bg-amber-950/30 shadow-lg shadow-amber-900/20 scale-[1.01]'
+                            : selectedToken === t.id ? 'border-zinc-500 bg-zinc-800/60'
+                            : t.token_type === 'player' ? 'border-sky-900/50 bg-sky-950/20 hover:bg-sky-950/30'
+                            : t.token_type === 'monster' ? 'border-red-900/50 bg-red-950/20 hover:bg-red-950/30'
+                            : 'border-zinc-700/60 bg-zinc-800/30 hover:bg-zinc-800/50'
+                        } ${t.is_hidden ? 'opacity-40' : ''}`}>
+                        <div className={`w-6 h-6 rounded flex items-center justify-center flex-shrink-0 text-[10px] font-bold ${isActive ? 'bg-amber-700 text-amber-100' : 'bg-zinc-800 text-zinc-500'}`}>
+                          {idx + 1}
                         </div>
-                        {pct !== null && (
-                          <div className="h-1 rounded-full bg-zinc-800">
-                            <div className="h-full rounded-full transition-all" style={{ width: `${pct * 100}%`, backgroundColor: color }} />
+                        <div className="w-7 h-7 rounded flex items-center justify-center bg-zinc-800/80 border border-zinc-700/60 flex-shrink-0">
+                          <span className="text-xs font-bold text-amber-500">{modSign(t.initiative ?? 0)}</span>
+                        </div>
+                        <span className="text-xl flex-shrink-0">{t.icon}</span>
+                        <div className="flex-1 min-w-0">
+                          <div className="flex items-center gap-1.5 flex-wrap">
+                            <p className="text-sm font-semibold text-zinc-200 truncate">{t.name}</p>
+                            {t.is_staged && <span className="text-[9px] uppercase font-bold text-zinc-500 bg-zinc-800/60 px-1.5 py-0.5 rounded">Bereit</span>}
+                            {isActive && <span className="text-[9px] uppercase font-bold text-amber-400 bg-amber-900/30 px-1.5 py-0.5 rounded">Am Zug</span>}
+                            {t.is_hidden && <EyeOff className="w-3 h-3 text-zinc-600" />}
+                            {activeConds.map(c => <span key={c.id} className={`text-[10px] px-1 rounded ${c.bg} ${c.border} ${c.color}`}>{c.icon}</span>)}
+                          </div>
+                          <div className="flex gap-3 text-[11px] text-zinc-600 flex-wrap">
+                            {t.max_hp !== null && <span className={t.current_hp === 0 ? 'text-red-500' : ''}>{t.current_hp}/{t.max_hp} HP</span>}
+                            {t.armor_class !== null && <span>RK {t.armor_class}</span>}
+                            {t.speed !== null && <span className={remainFt <= 0 ? 'text-red-600' : 'text-sky-600'}>{remainFt}/{t.speed} ft</span>}
+                          </div>
+                        </div>
+                        {t.max_hp !== null && (
+                          <div className="flex gap-1">
+                            <button onClick={e => { e.stopPropagation(); updateToken(t.id, { current_hp: Math.max(0, (t.current_hp ?? 0) - 1) }) }}
+                              className="w-6 h-6 rounded bg-red-950/50 border border-red-800/50 text-red-400 text-xs font-bold hover:bg-red-900/60">−</button>
+                            <button onClick={e => { e.stopPropagation(); updateToken(t.id, { current_hp: Math.min(t.max_hp!, (t.current_hp ?? 0) + 1) }) }}
+                              className="w-6 h-6 rounded bg-emerald-950/50 border border-emerald-800/50 text-emerald-400 text-xs font-bold hover:bg-emerald-900/60">+</button>
                           </div>
                         )}
+                        <button onClick={e => { e.stopPropagation(); setEditingToken(t) }} className="p-1 text-zinc-700 hover:text-zinc-400">
+                          <Edit2 className="w-3.5 h-3.5" />
+                        </button>
+                        <button onClick={e => { e.stopPropagation(); deleteToken(t.id) }} className="p-1 text-zinc-700 hover:text-red-600">
+                          <Trash2 className="w-3.5 h-3.5" />
+                        </button>
                       </div>
                     )
                   })}
                 </div>
-              </div>
-            )}
 
-            {/* ── Initiative Order ── */}
-            <div className="space-y-1">
-              <div className="flex items-center justify-between mb-1">
-                <p className="text-xs font-semibold text-zinc-500">{tokens.length} Figuren · nach Initiative sortiert</p>
-                <button onClick={resetAllMovement}
-                  className="flex items-center gap-1 px-2 py-1 rounded bg-zinc-800 border border-zinc-700 text-xs text-zinc-500 hover:text-zinc-300">
-                  <RotateCcw className="w-3 h-3" /> Bewegung reset
-                </button>
-              </div>
-              {tokens.length === 0 && <p className="text-sm text-zinc-700 text-center py-8">Keine Token auf der Karte.</p>}
-              {sortedInitiative.map((t, idx) => {
-                const activeConds = CONDITIONS.filter(c => t.conditions.includes(c.id))
-                const remainFt = (t.speed ?? 0) - (t.movement_used ?? 0)
-                const isActive = activeTurnToken?.id === t.id
-                const initIdx = initiativeData.current_turn % sortedInitiative.length
-                return (
-                  <div key={t.id} onClick={() => setSelectedToken(t.id === selectedToken ? null : t.id)}
-                    className={`flex items-center gap-3 px-3 py-2.5 rounded-lg border cursor-pointer transition-all ${
-                      isActive
-                        ? 'border-amber-600/70 bg-amber-950/30 shadow-lg shadow-amber-900/20 scale-[1.01]'
-                        : selectedToken === t.id ? 'border-zinc-500 bg-zinc-800/60'
-                        : t.token_type === 'player' ? 'border-sky-900/50 bg-sky-950/20 hover:bg-sky-950/30'
-                        : t.token_type === 'monster' ? 'border-red-900/50 bg-red-950/20 hover:bg-red-950/30'
-                        : 'border-zinc-700/60 bg-zinc-800/30 hover:bg-zinc-800/50'
-                    } ${t.is_hidden ? 'opacity-40' : ''}`}>
-                    {/* Position badge */}
-                    <div className={`w-6 h-6 rounded flex items-center justify-center flex-shrink-0 text-[10px] font-bold ${isActive ? 'bg-amber-700 text-amber-100' : 'bg-zinc-800 text-zinc-500'}`}>
-                      {idx + 1}
+                {/* ── Concentration Tracker ── */}
+                <div className="bg-zinc-900 border border-zinc-800 rounded-xl p-3">
+                  <p className="text-[10px] uppercase font-semibold text-zinc-600 mb-2 flex items-center gap-1">
+                    🎯 Konzentrations-Tracker
+                  </p>
+                  {concentratingTokens.length === 0 ? (
+                    <p className="text-xs text-zinc-700 italic">Keine aktiven Konzentrationszauber</p>
+                  ) : (
+                    <div className="space-y-1.5">
+                      {concentratingTokens.map(t => (
+                        <div key={t.id} className="flex items-center gap-2 px-2.5 py-2 rounded-lg bg-indigo-950/40 border border-indigo-800/40">
+                          <span className="text-base">{t.icon}</span>
+                          <div className="flex-1 min-w-0">
+                            <p className="text-xs font-semibold text-indigo-200 truncate">{t.name}</p>
+                            <p className="text-[10px] text-indigo-600">Konzentration aktiv</p>
+                          </div>
+                          <button
+                            onClick={() => updateToken(t.id, { conditions: t.conditions.filter(c => c !== 'Konzentration') })}
+                            className="text-xs text-indigo-500 hover:text-red-400 px-2 py-0.5 rounded border border-indigo-800/40 hover:border-red-800/40 transition-colors">
+                            Unterbrechen
+                          </button>
+                        </div>
+                      ))}
                     </div>
-                    <div className="w-7 h-7 rounded flex items-center justify-center bg-zinc-800/80 border border-zinc-700/60 flex-shrink-0">
-                      <span className="text-xs font-bold text-amber-500">{modSign(t.initiative ?? 0)}</span>
-                    </div>
-                    <span className="text-xl flex-shrink-0">{t.icon}</span>
-                    <div className="flex-1 min-w-0">
-                      <div className="flex items-center gap-1.5 flex-wrap">
-                        <p className="text-sm font-semibold text-zinc-200 truncate">{t.name}</p>
-                        {isActive && <span className="text-[9px] uppercase font-bold text-amber-400 bg-amber-900/30 px-1.5 py-0.5 rounded">Am Zug</span>}
-                        {t.is_hidden && <EyeOff className="w-3 h-3 text-zinc-600" />}
-                        {activeConds.map(c => <span key={c.id} className={`text-[10px] px-1 rounded ${c.bg} ${c.border} ${c.color}`}>{c.icon}</span>)}
-                      </div>
-                      <div className="flex gap-3 text-[11px] text-zinc-600 flex-wrap">
-                        {t.max_hp !== null && <span className={t.current_hp === 0 ? 'text-red-500' : ''}>{t.current_hp}/{t.max_hp} HP</span>}
-                        {t.armor_class !== null && <span>RK {t.armor_class}</span>}
-                        {t.speed !== null && <span className={remainFt <= 0 ? 'text-red-600' : 'text-sky-600'}>{remainFt}/{t.speed} ft</span>}
-                      </div>
-                    </div>
-                    {t.max_hp !== null && (
-                      <div className="flex gap-1">
-                        <button onClick={e => { e.stopPropagation(); updateToken(t.id, { current_hp: Math.max(0, (t.current_hp ?? 0) - 1) }) }}
-                          className="w-6 h-6 rounded bg-red-950/50 border border-red-800/50 text-red-400 text-xs font-bold hover:bg-red-900/60">−</button>
-                        <button onClick={e => { e.stopPropagation(); updateToken(t.id, { current_hp: Math.min(t.max_hp!, (t.current_hp ?? 0) + 1) }) }}
-                          className="w-6 h-6 rounded bg-emerald-950/50 border border-emerald-800/50 text-emerald-400 text-xs font-bold hover:bg-emerald-900/60">+</button>
-                      </div>
-                    )}
-                    <button onClick={e => { e.stopPropagation(); setEditingToken(t) }} className="p-1 text-zinc-700 hover:text-zinc-400">
-                      <Edit2 className="w-3.5 h-3.5" />
-                    </button>
-                    <button onClick={e => { e.stopPropagation(); deleteToken(t.id) }} className="p-1 text-zinc-700 hover:text-red-600">
-                      <Trash2 className="w-3.5 h-3.5" />
+                  )}
+                </div>
+              </>
+            ) : (
+              /* ── V17: Combat Log Sub-Tab ── */
+              <div className="space-y-3">
+                {/* Manual entry for GM */}
+                <div className="bg-zinc-900 border border-zinc-800 rounded-xl p-3 space-y-2">
+                  <p className="text-[10px] uppercase font-semibold text-zinc-600">Eintrag hinzufügen</p>
+                  <div className="flex gap-2">
+                    <input
+                      className="flex-1 bg-zinc-800 border border-zinc-700 rounded-lg px-3 py-1.5 text-xs text-zinc-100 placeholder-zinc-600 focus:outline-none focus:border-zinc-500"
+                      placeholder="Beschreibung…"
+                      value={logInput}
+                      onChange={e => setLogInput(e.target.value)}
+                      onKeyDown={e => {
+                        if (e.key === 'Enter' && logInput.trim() && activeMap) {
+                          addLogEntry(activeMap.id, user?.email ?? 'GM', 'note', logInput.trim(), true)
+                          setLogInput('')
+                        }
+                      }}
+                    />
+                    <button
+                      onClick={() => {
+                        if (logInput.trim() && activeMap) {
+                          addLogEntry(activeMap.id, user?.email ?? 'GM', 'note', logInput.trim(), true)
+                          setLogInput('')
+                        }
+                      }}
+                      className="px-3 py-1.5 rounded-lg bg-zinc-700 text-xs text-zinc-300 hover:bg-zinc-600">
+                      Hinzufügen
                     </button>
                   </div>
-                )
-              })}
-            </div>
+                  <button
+                    onClick={async () => {
+                      if (!activeMap) return
+                      await supabase.from('combat_log').delete().eq('map_id', activeMap.id)
+                      setCombatLog([])
+                    }}
+                    className="text-[10px] text-zinc-700 hover:text-red-500 transition-colors">
+                    Log leeren
+                  </button>
+                </div>
 
-            {/* ── Concentration Tracker ── */}
-            <div className="bg-zinc-900 border border-zinc-800 rounded-xl p-3">
-              <p className="text-[10px] uppercase font-semibold text-zinc-600 mb-2 flex items-center gap-1">
-                🎯 Konzentrations-Tracker
-              </p>
-              {concentratingTokens.length === 0 ? (
-                <p className="text-xs text-zinc-700 italic">Keine aktiven Konzentrationszauber</p>
-              ) : (
-                <div className="space-y-1.5">
-                  {concentratingTokens.map(t => (
-                    <div key={t.id} className="flex items-center gap-2 px-2.5 py-2 rounded-lg bg-indigo-950/40 border border-indigo-800/40">
-                      <span className="text-base">{t.icon}</span>
-                      <div className="flex-1 min-w-0">
-                        <p className="text-xs font-semibold text-indigo-200 truncate">{t.name}</p>
-                        <p className="text-[10px] text-indigo-600">Konzentration aktiv</p>
+                {/* Log entries */}
+                <div className="space-y-1">
+                  {combatLog.length === 0 && (
+                    <p className="text-xs text-zinc-700 text-center py-8">Noch keine Kampflog-Einträge.</p>
+                  )}
+                  {combatLog.map(entry => (
+                    <div key={entry.id}
+                      className={`px-3 py-2 rounded-lg border text-xs ${
+                        entry.is_gm_action
+                          ? 'bg-red-950/20 border-red-900/40 text-red-300'
+                          : 'bg-zinc-900/60 border-zinc-800/60 text-zinc-400'
+                      }`}>
+                      <div className="flex items-center justify-between gap-2 mb-0.5">
+                        <span className="font-semibold text-[11px]">{entry.actor_name}</span>
+                        <span className="text-[10px] text-zinc-600 tabular-nums">
+                          {new Date(entry.created_at).toLocaleTimeString('de-DE', { hour: '2-digit', minute: '2-digit' })}
+                        </span>
                       </div>
-                      <button
-                        onClick={() => updateToken(t.id, { conditions: t.conditions.filter(c => c !== 'Konzentration') })}
-                        className="text-xs text-indigo-500 hover:text-red-400 px-2 py-0.5 rounded border border-indigo-800/40 hover:border-red-800/40 transition-colors">
-                        Unterbrechen
-                      </button>
+                      <p className="text-[11px] leading-relaxed">{entry.description}</p>
                     </div>
                   ))}
                 </div>
-              )}
-            </div>
-
+              </div>
+            )}
           </div>
         ) : (
           /* ── Map View ── */
           <div className="flex-1 overflow-hidden flex">
-            <div className="flex-1 overflow-auto relative bg-zinc-950">
+
+            {/* ── V17: Staging Panel (GM only, left side) ── */}
+            {isGM && activeMap && (
+              <div className={`flex-shrink-0 bg-zinc-950 border-r border-zinc-800/80 flex flex-col transition-all ${showStaging ? 'w-56' : 'w-8'}`}>
+                <button
+                  onClick={() => setShowStaging(!showStaging)}
+                  className="flex items-center justify-center p-2 text-zinc-600 hover:text-zinc-400 border-b border-zinc-800/60 flex-shrink-0"
+                  title={showStaging ? 'Staging ausblenden' : 'Staging einblenden'}>
+                  {showStaging ? <ChevronLeft className="w-3.5 h-3.5" /> : <ChevronRightIcon className="w-3.5 h-3.5" />}
+                </button>
+                {showStaging && (
+                  <div className="flex-1 overflow-y-auto p-2 space-y-2">
+                    <p className="text-[10px] uppercase font-semibold text-zinc-600 flex items-center gap-1 px-1">
+                      <Layers className="w-3 h-3" /> Bereitstellung
+                    </p>
+                    {stagedTokens.length === 0 && (
+                      <p className="text-[10px] text-zinc-700 italic px-1">Keine bereitgestellten Token</p>
+                    )}
+                    {stagedTokens.map(t => (
+                      <div key={t.id}
+                        className={`rounded-lg border p-2 cursor-pointer transition-colors ${
+                          selectedToken === t.id ? 'border-amber-600/70 bg-amber-950/20' : 'border-zinc-700/60 bg-zinc-900/60 hover:bg-zinc-800/60'
+                        }`}
+                        onClick={() => setSelectedToken(t.id === selectedToken ? null : t.id)}>
+                        <div className="flex items-center gap-1.5 mb-1">
+                          <span className="text-base">{t.icon}</span>
+                          <div className="flex-1 min-w-0">
+                            <p className="text-[11px] font-semibold text-zinc-200 truncate">{t.name}</p>
+                            <span className={`text-[9px] px-1 py-0.5 rounded font-medium ${
+                              t.token_type === 'player' ? 'bg-sky-900/30 text-sky-400' :
+                              t.token_type === 'monster' ? 'bg-red-900/30 text-red-400' :
+                              'bg-zinc-800/60 text-zinc-500'
+                            }`}>
+                              {t.token_type === 'player' ? 'Spieler' : t.token_type === 'monster' ? 'Kreatur' : 'NPC'}
+                            </span>
+                          </div>
+                        </div>
+                        <button
+                          onClick={e => { e.stopPropagation(); deployToken(t.id) }}
+                          className="w-full py-1 rounded bg-emerald-900/30 border border-emerald-700/50 text-[10px] text-emerald-300 hover:bg-emerald-900/50 font-semibold">
+                          Deploy
+                        </button>
+                      </div>
+                    ))}
+                  </div>
+                )}
+              </div>
+            )}
+
+            {/* ── V17: Viewport (zoom/pan container) ── */}
+            <div
+              ref={viewportRef}
+              className="flex-1 overflow-hidden relative bg-zinc-950"
+              onMouseDown={handleViewportMouseDown}
+              onDoubleClick={() => { setZoom(1); setPanX(0); setPanY(0) }}
+              style={{ cursor: isPanningRef.current ? 'grabbing' : 'default' }}
+            >
+              {/* Canvas (transformed for zoom/pan) */}
               <div
                 ref={mapRef}
                 className="relative select-none"
                 style={{
+                  transform: `translate(${panX}px, ${panY}px) scale(${zoom})`,
+                  transformOrigin: '0 0',
+                  position: 'absolute',
                   width: activeMap.grid_cols * cs + ox,
                   height: activeMap.grid_rows * cs + oy,
                   backgroundImage: activeMap.image_url
@@ -1945,6 +2331,7 @@ export default function BattleMapPage() {
                   cursor: fogMode ? 'crosshair' : terrainMode ? 'crosshair' : effectMode ? 'cell' : moveMode ? 'pointer' : dragRender ? 'grabbing' : 'default',
                 }}
                 onClick={handleGridClick}
+                onMouseDown={handleMapMouseDown}
                 onMouseMove={handleGridMouseMove}
                 onMouseLeave={() => { setHoverCell(null); setHoverCoord(null) }}
               >
@@ -2008,7 +2395,7 @@ export default function BattleMapPage() {
                       strokeWidth="2" strokeDasharray="6 3" rx="4" />
                   })()}
 
-                  {/* Fog of War — render above everything else */}
+                  {/* Fog of War */}
                   {(activeMap.fog_cells ?? []).map(fc => {
                     const p = cellPx(fc.col, fc.row)
                     return (
@@ -2025,8 +2412,13 @@ export default function BattleMapPage() {
                   {fogMode && hoverCoord && (
                     <rect x={hoverCoord.col * cs + ox} y={hoverCoord.row * cs + oy}
                       width={cs} height={cs}
-                      fill={fogSet.has(`${hoverCoord.col},${hoverCoord.row}`) ? 'rgba(200,200,255,0.15)' : 'rgba(80,60,120,0.30)'}
-                      stroke="rgba(150,120,220,0.8)" strokeWidth="1.5" strokeDasharray="4 2" />
+                      fill={
+                        fogBrushMode === 'erase'
+                          ? 'rgba(200,255,200,0.15)'
+                          : fogSet.has(`${hoverCoord.col},${hoverCoord.row}`) ? 'rgba(200,200,255,0.15)' : 'rgba(80,60,120,0.30)'
+                      }
+                      stroke={fogBrushMode === 'erase' ? 'rgba(100,220,100,0.8)' : 'rgba(150,120,220,0.8)'}
+                      strokeWidth="1.5" strokeDasharray="4 2" />
                   )}
                 </svg>
 
@@ -2047,8 +2439,8 @@ export default function BattleMapPage() {
                     className="border-2 border-orange-600/70 bg-orange-500/20" />
                 )}
 
-                {/* Tokens */}
-                {visibleTokens.map(t => {
+                {/* Tokens (map only, not staged) */}
+                {mapTokens.map(t => {
                   const span = getSizeSpan(t.token_size || 'medium')
                   const spanPx = span >= 1 ? Math.round(span) * cs : Math.round(cs * span)
                   const isDragged = dragRender?.tokenId === t.id && dragRender.hoverCell !== null
@@ -2128,7 +2520,7 @@ export default function BattleMapPage() {
                 {fogMode && (
                   <div className="absolute bottom-3 left-1/2 -translate-x-1/2 bg-slate-900/90 text-slate-200 text-xs px-3 py-1.5 rounded-full pointer-events-none border border-slate-700/60">
                     <Cloud className="w-3.5 h-3.5 inline mr-1.5" />
-                    Nebelkrieg-Modus — Klicke Felder um Nebel hinzuzufügen/entfernen
+                    {fogBrushMode === 'paint' ? 'Pinsel' : 'Radierer'} — Ziehe über Felder
                   </div>
                 )}
                 {terrainMode && !fogMode && (
@@ -2142,11 +2534,42 @@ export default function BattleMapPage() {
                   </div>
                 )}
                 {!moveMode && !terrainMode && !effectMode && !fogMode && (
-                  <div className="absolute bottom-3 right-3 text-zinc-700 text-[10px] pointer-events-none">
-                    Ziehen oder Pfeiltasten zum Bewegen
+                  <div className="absolute bottom-10 right-3 text-zinc-700 text-[10px] pointer-events-none">
+                    Ziehen oder Pfeiltasten zum Bewegen · Mausrad = Zoom · Mitteltaste = Pan
                   </div>
                 )}
               </div>
+
+              {/* ── V17: Dice Wall Overlay (bottom-left of viewport, not canvas) ── */}
+              {filteredDiceWall.length > 0 && (
+                <div className="absolute bottom-3 left-3 z-20 flex flex-col items-start gap-1 pointer-events-auto">
+                  <button
+                    onClick={() => setShowDiceWall(!showDiceWall)}
+                    className="flex items-center gap-1.5 px-2 py-1 rounded-full bg-black/70 backdrop-blur border border-zinc-700/60 text-zinc-400 text-[10px] hover:text-zinc-200 transition-colors">
+                    🎲 Würfelwand {showDiceWall ? '▾' : '▸'}
+                  </button>
+                  {showDiceWall && (
+                    <div className="bg-black/70 backdrop-blur-sm border border-zinc-700/50 rounded-xl p-2.5 space-y-1 min-w-40 max-w-48">
+                      {filteredDiceWall.slice(0, 7).map(r => (
+                        <div key={r.id} className="flex items-center gap-2 text-[10px]">
+                          <span className="text-zinc-500 truncate max-w-20">{r.label ?? 'Wurf'}</span>
+                          <span className="ml-auto font-bold tabular-nums text-amber-400">{r.total}</span>
+                          <span className="text-zinc-600">{r.dice_config?.map(d => `${d.count}${d.type}`).join('+') ?? ''}</span>
+                        </div>
+                      ))}
+                    </div>
+                  )}
+                </div>
+              )}
+
+              {/* ── V17: Feet per cell display (bottom-right of viewport) ── */}
+              {activeMap && (
+                <div className="absolute bottom-3 right-3 z-20 pointer-events-none">
+                  <span className="bg-black/60 text-zinc-400 text-[10px] px-2 py-0.5 rounded font-mono">
+                    {activeMap.feet_per_cell ?? 5} ft / Feld
+                  </span>
+                </div>
+              )}
             </div>
 
             {/* Right Panel */}
