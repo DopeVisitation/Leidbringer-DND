@@ -3,9 +3,10 @@
 import { useState, useEffect, useRef, useCallback, useMemo } from 'react'
 import {
   Map as MapIcon, Plus, Trash2, X, Eye, EyeOff, Shield, Heart, Zap,
-  Edit2, Save, Bookmark, BookmarkCheck, SlidersHorizontal,
+  Edit2, Save, Bookmark, SlidersHorizontal,
   ChevronDown, ChevronRight, Lock, Unlock, Check, RotateCcw,
   Flame, Move, Footprints, Skull, ArrowUp, ArrowDown,
+  Timer, Play, Pause, SkipForward, SkipBack, Cloud, BookmarkCheck,
 } from 'lucide-react'
 import { createClient } from '@/lib/supabase/client'
 import { useAuth } from '@/lib/hooks/useAuth'
@@ -20,6 +21,10 @@ interface MapEffect {
   radius?: number; angle?: number; direction?: number; length?: number
 }
 
+interface InitiativeData {
+  round: number; current_turn: number; timer_seconds: number; active: boolean
+}
+
 interface BattleMap {
   id: string; name: string; image_url: string | null
   grid_cols: number; grid_rows: number; cell_size: number
@@ -27,6 +32,9 @@ interface BattleMap {
   grid_offset_x: number; grid_offset_y: number
   difficult_terrain: { col: number; row: number }[]
   map_effects: MapEffect[]; feet_per_cell: number; grid_locked: boolean
+  fog_cells: { col: number; row: number }[]
+  grid_color: string
+  initiative_data: InitiativeData
 }
 
 interface FavoriteAction {
@@ -50,34 +58,23 @@ interface DiceFavorite {
 
 // ─── Constants ────────────────────────────────────────────────────────────────
 const TOKEN_ICONS = [
-  // Krieger & Helden
   '⚔️','🗡️','🛡️','🏹','🪖','🔱','⚜️','🪃','🏴','🎖️',
-  // Magie & Zauber
   '🔮','🪄','📿','⭐','🌟','✨','💫','🌀','🔯','☄️',
   '🌙','☀️','⚡','🔥','❄️','🌊','🌪️','🌈','🌌','🌠',
-  // Untote (Dark Fantasy Kern)
   '💀','☠️','🦴','👻','🧟','🧛','🕸️','🕯️','⚰️','🪦',
   '🌑','🌚','🕳️','🖤','🩸','💔','🧠','👁️','🫀','🌃',
-  // Dämonen & Dunkle Wesen
   '👹','👺','😈','👿','💢','🌋','🔴','⛔','👾','🐾',
-  // Spinnen, Schlangen & Insekten
   '🕷️','🦂','🐍','🦇','🐜','🪲','🦟','🦠','🐛','🪳',
-  // Drachen & Greife
   '🐉','🐲','🦅','🦉','🦋','🦚','🐦‍⬛','🪽','🦜','🦆',
-  // Bestien & Monster
   '🐺','🦁','🐗','🐻','🐻‍❄️','🦊','🐅','🐆','🐘','🦛',
   '🦈','🦖','🦕','🐊','🐢','🦎','🐸','🐙','🦑','🦐',
   '🦀','🦞','🪼','🦭','🐬','🐳','🦏','🦒','🦬','🦣',
-  // Humanoide & NPCs
   '🧙','🧝','🧞','🧜','🧚','🧌','🥷','🤴','👸','🧓',
   '🎭','🃏','🎩','🏴‍☠️','🧔','👳','🎪','🤠','🧟‍♀️','🧛‍♀️',
-  // Umgebung & Terrain-Marker
   '🌲','🌴','🍄','🌿','🪨','🏔️','🗻','🌋','🏞️','🗺️',
   '🏰','🗼','⛩️','🏯','🕌','⛪','🗽','🏛️','🌉','🌁',
-  // Gegenstände & Artefakte
   '🗝️','⚗️','🧪','🏺','📜','🔑','⚙️','🧲','💣','🪤',
   '💎','💍','🪬','🧿','🎯','🎲','🀄','🎴','🏆','🥇',
-  // Spezial & Magie-Effekte
   '💥','🌟','✨','🌠','🌌','🌈','☄️','🌀','🔯','⛤',
   '🫧','🧊','💧','🫙','🌫️','🌬️','🌩️','🌧️','⛅','🌤️',
 ]
@@ -101,13 +98,13 @@ const CONDITIONS: ConditionDef[] = [
 ]
 
 const TOKEN_SIZES: { id: TokenSize; label: string; span: number; gridLabel: string }[] = [
-  { id: 'tiny',       label: 'Winzig',      span: 0.5, gridLabel: '½ Feld'      },
-  { id: 'small',      label: 'Klein',        span: 1,   gridLabel: '1×1'        },
-  { id: 'medium',     label: 'Mittel',       span: 1,   gridLabel: '1×1'        },
-  { id: 'large',      label: 'Groß',         span: 2,   gridLabel: '2×2'        },
-  { id: 'huge',       label: 'Riesig',       span: 3,   gridLabel: '3×3'        },
-  { id: 'gargantuan', label: 'Gigantisch',   span: 4,   gridLabel: '4×4'        },
-  { id: 'colossal',   label: 'Koloss',       span: 5,   gridLabel: '5×5'        },
+  { id: 'tiny',       label: 'Winzig',    span: 0.5, gridLabel: '½ Feld' },
+  { id: 'small',      label: 'Klein',     span: 1,   gridLabel: '1×1'   },
+  { id: 'medium',     label: 'Mittel',    span: 1,   gridLabel: '1×1'   },
+  { id: 'large',      label: 'Groß',      span: 2,   gridLabel: '2×2'   },
+  { id: 'huge',       label: 'Riesig',    span: 3,   gridLabel: '3×3'   },
+  { id: 'gargantuan', label: 'Gigantisch',span: 4,   gridLabel: '4×4'   },
+  { id: 'colossal',   label: 'Koloss',    span: 5,   gridLabel: '5×5'   },
 ]
 
 // ─── Effect Types ─────────────────────────────────────────────────────────────
@@ -116,34 +113,30 @@ interface EffectType {
   simple: boolean; category: 'hazard' | 'terrain' | 'magic' | 'aoe'
 }
 const EFFECT_TYPES: EffectType[] = [
-  // Hazards
-  { id: 'fire',      icon: '🔥', label: 'Feuer',        color: '#ff4400', simple: true,  category: 'hazard'  },
-  { id: 'ice',       icon: '❄️', label: 'Frost',        color: '#66ccff', simple: true,  category: 'hazard'  },
-  { id: 'lightning', icon: '⚡', label: 'Blitz',        color: '#ffdd22', simple: true,  category: 'hazard'  },
-  { id: 'poison',    icon: '☠️', label: 'Gift',         color: '#44cc00', simple: true,  category: 'hazard'  },
-  { id: 'acid',      icon: '🧪', label: 'Säure',        color: '#aaff00', simple: true,  category: 'hazard'  },
-  { id: 'lava',      icon: '🌋', label: 'Lava',         color: '#ff6600', simple: true,  category: 'hazard'  },
-  { id: 'blood',     icon: '🩸', label: 'Blut',         color: '#880000', simple: true,  category: 'hazard'  },
-  { id: 'explosion', icon: '💥', label: 'Explosion',    color: '#ffaa00', simple: true,  category: 'hazard'  },
-  // Terrain
-  { id: 'rock',      icon: '🪨', label: 'Fels/Mauer',  color: '#888888', simple: true,  category: 'terrain' },
-  { id: 'tree',      icon: '🌲', label: 'Baum',         color: '#226622', simple: true,  category: 'terrain' },
-  { id: 'water',     icon: '🌊', label: 'Wasser',       color: '#0055aa', simple: true,  category: 'terrain' },
-  { id: 'web',       icon: '🕸️', label: 'Spinnennetz',  color: '#cccc88', simple: true,  category: 'terrain' },
-  { id: 'grease',    icon: '🟡', label: 'Schmierfett',  color: '#ddcc00', simple: true,  category: 'terrain' },
-  // Magic
-  { id: 'darkness',  icon: '🌑', label: 'Dunkelheit',   color: '#220044', simple: true,  category: 'magic'   },
-  { id: 'fog',       icon: '🌫️', label: 'Nebel',        color: '#aaaaaa', simple: true,  category: 'magic'   },
-  { id: 'holy',      icon: '✨', label: 'Heiliges Licht',color: '#ffee44', simple: true,  category: 'magic'   },
-  { id: 'necrotic',  icon: '💀', label: 'Nekrose',      color: '#662288', simple: true,  category: 'magic'   },
-  { id: 'shadow',    icon: '🖤', label: 'Schatten',     color: '#110022', simple: true,  category: 'magic'   },
-  { id: 'force',     icon: '🔵', label: 'Kraftfeld',    color: '#4488ff', simple: true,  category: 'magic'   },
-  { id: 'silence',   icon: '🔇', label: 'Stille',       color: '#558899', simple: true,  category: 'magic'   },
-  // AOE
-  { id: 'circle',    icon: '⭕', label: 'Kreis (AOE)',  color: '#ff2200', simple: false, category: 'aoe'     },
-  { id: 'cone',      icon: '🔺', label: 'Kegel (AOE)',  color: '#ff8800', simple: false, category: 'aoe'     },
-  { id: 'line',      icon: '➡️', label: 'Linie (AOE)',  color: '#ff4488', simple: false, category: 'aoe'     },
-  { id: 'aura',      icon: '🌟', label: 'Aura',         color: '#ffcc00', simple: false, category: 'aoe'     },
+  { id: 'fire',      icon: '🔥', label: 'Feuer',         color: '#ff4400', simple: true,  category: 'hazard'  },
+  { id: 'ice',       icon: '❄️', label: 'Frost',         color: '#66ccff', simple: true,  category: 'hazard'  },
+  { id: 'lightning', icon: '⚡', label: 'Blitz',         color: '#ffdd22', simple: true,  category: 'hazard'  },
+  { id: 'poison',    icon: '☠️', label: 'Gift',          color: '#44cc00', simple: true,  category: 'hazard'  },
+  { id: 'acid',      icon: '🧪', label: 'Säure',         color: '#aaff00', simple: true,  category: 'hazard'  },
+  { id: 'lava',      icon: '🌋', label: 'Lava',          color: '#ff6600', simple: true,  category: 'hazard'  },
+  { id: 'blood',     icon: '🩸', label: 'Blut',          color: '#880000', simple: true,  category: 'hazard'  },
+  { id: 'explosion', icon: '💥', label: 'Explosion',     color: '#ffaa00', simple: true,  category: 'hazard'  },
+  { id: 'rock',      icon: '🪨', label: 'Fels/Mauer',   color: '#888888', simple: true,  category: 'terrain' },
+  { id: 'tree',      icon: '🌲', label: 'Baum',          color: '#226622', simple: true,  category: 'terrain' },
+  { id: 'water',     icon: '🌊', label: 'Wasser',        color: '#0055aa', simple: true,  category: 'terrain' },
+  { id: 'web',       icon: '🕸️', label: 'Spinnennetz',   color: '#cccc88', simple: true,  category: 'terrain' },
+  { id: 'grease',    icon: '🟡', label: 'Schmierfett',   color: '#ddcc00', simple: true,  category: 'terrain' },
+  { id: 'darkness',  icon: '🌑', label: 'Dunkelheit',    color: '#220044', simple: true,  category: 'magic'   },
+  { id: 'fog',       icon: '🌫️', label: 'Nebel',         color: '#aaaaaa', simple: true,  category: 'magic'   },
+  { id: 'holy',      icon: '✨', label: 'Heiliges Licht', color: '#ffee44', simple: true,  category: 'magic'   },
+  { id: 'necrotic',  icon: '💀', label: 'Nekrose',       color: '#662288', simple: true,  category: 'magic'   },
+  { id: 'shadow',    icon: '🖤', label: 'Schatten',      color: '#110022', simple: true,  category: 'magic'   },
+  { id: 'force',     icon: '🔵', label: 'Kraftfeld',     color: '#4488ff', simple: true,  category: 'magic'   },
+  { id: 'silence',   icon: '🔇', label: 'Stille',        color: '#558899', simple: true,  category: 'magic'   },
+  { id: 'circle',    icon: '⭕', label: 'Kreis (AOE)',   color: '#ff2200', simple: false, category: 'aoe'     },
+  { id: 'cone',      icon: '🔺', label: 'Kegel (AOE)',   color: '#ff8800', simple: false, category: 'aoe'     },
+  { id: 'line',      icon: '➡️', label: 'Linie (AOE)',   color: '#ff4488', simple: false, category: 'aoe'     },
+  { id: 'aura',      icon: '🌟', label: 'Aura',          color: '#ffcc00', simple: false, category: 'aoe'     },
 ]
 
 interface MonsterTemplate {
@@ -184,15 +177,19 @@ function statMod(v: number) { return Math.floor((v - 10) / 2) }
 function rollDie(sides: number) { return Math.floor(Math.random() * sides) + 1 }
 function parseSides(type: string) { return parseInt(type.slice(1)) }
 
+function hexToRgba(hex: string, alpha: number): string {
+  if (!hex || !hex.startsWith('#')) return `rgba(200,180,150,${alpha})`
+  const r = parseInt(hex.slice(1, 3), 16)
+  const g = parseInt(hex.slice(3, 5), 16)
+  const b = parseInt(hex.slice(5, 7), 16)
+  return `rgba(${r},${g},${b},${alpha})`
+}
+
 function getSizeSpan(size: TokenSize | string | undefined): number {
   switch (size) {
-    case 'tiny':       return 0.5
-    case 'small':      return 1
-    case 'large':      return 2
-    case 'huge':       return 3
-    case 'gargantuan': return 4
-    case 'colossal':   return 5
-    default:           return 1
+    case 'tiny': return 0.5; case 'small': return 1; case 'large': return 2
+    case 'huge': return 3; case 'gargantuan': return 4; case 'colossal': return 5
+    default: return 1
   }
 }
 
@@ -222,8 +219,7 @@ function getReachableCells(
       const key = `${nc},${nr}`
       if (nc < 0 || nr < 0 || nc >= gridCols || nr >= gridRows) continue
       if (occupied.has(key)) continue
-      const isHard = dtSet.has(key)
-      const newCost = cost + (isHard ? feetPerCell * 2 : feetPerCell)
+      const newCost = cost + (dtSet.has(key) ? feetPerCell * 2 : feetPerCell)
       if (newCost <= remaining && (!dist.has(key) || dist.get(key)! > newCost)) {
         dist.set(key, newCost)
         queue.push({ col: nc, row: nr, cost: newCost })
@@ -239,21 +235,18 @@ function buildPath(
   dist: Map<string, number>,
 ): { col: number; row: number }[] {
   const path: { col: number; row: number }[] = [target]
-  let cur = target
-  let safety = 0
+  let cur = target; let safety = 0
   while ((cur.col !== start.col || cur.row !== start.row) && safety < 100) {
     safety++
     const curCost = dist.get(`${cur.col},${cur.row}`) ?? 0
-    let best: { col: number; row: number } | null = null
-    let bestCost = Infinity
+    let best: { col: number; row: number } | null = null; let bestCost = Infinity
     for (const [dc, dr] of [[-1,0],[1,0],[0,-1],[0,1]]) {
       const nc = cur.col + dc, nr = cur.row + dr
       const cost = (nc === start.col && nr === start.row) ? -1 : (dist.get(`${nc},${nr}`) ?? Infinity)
       if (cost < curCost && cost < bestCost) { best = { col: nc, row: nr }; bestCost = cost }
     }
     if (!best) break
-    path.unshift(best)
-    cur = best
+    path.unshift(best); cur = best
   }
   return path
 }
@@ -273,7 +266,6 @@ function TokenModal({ initial, onSave, onClose, title }: {
 }) {
   const [form, setForm] = useState({ ...BLANK_TOKEN_FORM, ...initial })
   const [showIcons, setShowIcons] = useState(false)
-
   return (
     <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/80 backdrop-blur-sm p-4">
       <div className="bg-zinc-950 border border-zinc-700/80 rounded-2xl w-full max-w-lg max-h-[90vh] flex flex-col shadow-2xl shadow-black/60">
@@ -299,19 +291,13 @@ function TokenModal({ initial, onSave, onClose, title }: {
                 placeholder="Name" value={form.name} onChange={e => setForm(f => ({ ...f, name: e.target.value }))} />
             </div>
           </div>
-
-          {/* Größe */}
           <div>
             <label className="text-[10px] uppercase font-semibold text-zinc-500 block mb-1">Größe</label>
             <select className="w-full bg-zinc-800 border border-zinc-700 rounded-lg px-2 py-2 text-sm text-zinc-100 focus:outline-none focus:border-red-700"
               value={form.token_size} onChange={e => setForm(f => ({ ...f, token_size: e.target.value as TokenSize }))}>
-              {TOKEN_SIZES.map(s => (
-                <option key={s.id} value={s.id}>{s.label} ({s.gridLabel})</option>
-              ))}
+              {TOKEN_SIZES.map(s => <option key={s.id} value={s.id}>{s.label} ({s.gridLabel})</option>)}
             </select>
           </div>
-
-          {/* Icon Picker */}
           <div>
             <label className="text-[10px] uppercase font-semibold text-zinc-500 block mb-1">Token-Symbol</label>
             <button onClick={() => setShowIcons(!showIcons)}
@@ -332,32 +318,24 @@ function TokenModal({ initial, onSave, onClose, title }: {
                 </div>
                 <div className="mt-2 flex gap-2 border-t border-zinc-700 pt-2">
                   <input className="flex-1 bg-zinc-800 border border-zinc-700 rounded-lg px-2 py-1 text-sm text-zinc-100 placeholder-zinc-600 focus:outline-none"
-                    placeholder="Eigenes Emoji…"
-                    onChange={e => { if (e.target.value) setForm(f => ({ ...f, icon: e.target.value })) }} />
+                    placeholder="Eigenes Emoji…" onChange={e => { if (e.target.value) setForm(f => ({ ...f, icon: e.target.value })) }} />
                 </div>
               </div>
             )}
           </div>
-
-          {/* Kampfwerte */}
           <div>
             <label className="text-[10px] uppercase font-semibold text-zinc-500 block mb-2">Kampfwerte</label>
             <div className="grid grid-cols-5 gap-2">
-              {[
-                { key: 'max_hp', label: 'Max HP' }, { key: 'armor_class', label: 'RK' },
-                { key: 'speed', label: 'Speed ft' }, { key: 'initiative', label: 'Initiative' }, { key: 'cr', label: 'CR' },
-              ].map(({ key, label }) => (
+              {[{key:'max_hp',label:'Max HP'},{key:'armor_class',label:'RK'},{key:'speed',label:'Speed ft'},{key:'initiative',label:'Initiative'},{key:'cr',label:'CR'}].map(({key,label}) => (
                 <div key={key}>
                   <label className="text-[9px] uppercase text-zinc-600 block mb-0.5">{label}</label>
-                  <input type={key === 'cr' ? 'text' : 'number'}
+                  <input type={key==='cr'?'text':'number'}
                     className="w-full bg-zinc-800 border border-zinc-700 rounded-lg px-2 py-1.5 text-sm text-zinc-100 text-center focus:outline-none focus:border-red-700"
-                    value={(form as any)[key]} onChange={e => setForm(f => ({ ...f, [key]: e.target.value }))} />
+                    value={(form as any)[key]} onChange={e => setForm(f => ({...f,[key]:e.target.value}))} />
                 </div>
               ))}
             </div>
           </div>
-
-          {/* Attribute */}
           <div>
             <label className="text-[10px] uppercase font-semibold text-zinc-500 block mb-2">Attribute</label>
             <div className="grid grid-cols-6 gap-2">
@@ -366,18 +344,16 @@ function TokenModal({ initial, onSave, onClose, title }: {
                   <label className="text-[9px] uppercase text-zinc-600 mb-0.5">{ab.toUpperCase()}</label>
                   <input type="number" min={1} max={30}
                     className="w-full bg-zinc-800 border border-zinc-700 rounded-lg py-1.5 text-sm text-zinc-100 text-center focus:outline-none focus:border-red-700"
-                    value={(form as any)[ab]} onChange={e => setForm(f => ({ ...f, [ab]: e.target.value }))} />
-                  <span className="text-[9px] text-zinc-600 mt-0.5">{modSign(statMod(parseInt((form as any)[ab]) || 10))}</span>
+                    value={(form as any)[ab]} onChange={e => setForm(f => ({...f,[ab]:e.target.value}))} />
+                  <span className="text-[9px] text-zinc-600 mt-0.5">{modSign(statMod(parseInt((form as any)[ab])||10))}</span>
                 </div>
               ))}
             </div>
           </div>
-
-          {/* Notizen */}
           <div>
             <label className="text-[10px] uppercase font-semibold text-zinc-500 block mb-1">Fähigkeiten / Notizen</label>
             <textarea rows={2} className="w-full bg-zinc-800 border border-zinc-700 rounded-lg px-3 py-2 text-sm text-zinc-100 placeholder-zinc-600 focus:outline-none focus:border-red-700 resize-none"
-              placeholder="Besondere Fähigkeiten, Traits…" value={form.notes} onChange={e => setForm(f => ({ ...f, notes: e.target.value }))} />
+              placeholder="Besondere Fähigkeiten, Traits…" value={form.notes} onChange={e => setForm(f => ({...f,notes:e.target.value}))} />
           </div>
         </div>
         <div className="flex gap-2 px-5 py-4 border-t border-zinc-800 flex-shrink-0">
@@ -393,8 +369,9 @@ function TokenModal({ initial, onSave, onClose, title }: {
 }
 
 // ─── Token Piece ──────────────────────────────────────────────────────────────
-function TokenPiece({ token, selected, cellSize, isMoving, isDragged }: {
-  token: BattleToken; selected: boolean; cellSize: number; isMoving?: boolean; isDragged?: boolean
+function TokenPiece({ token, selected, cellSize, isMoving, isDragged, isActiveTurn }: {
+  token: BattleToken; selected: boolean; cellSize: number
+  isMoving?: boolean; isDragged?: boolean; isActiveTurn?: boolean
 }) {
   const span = getSizeSpan(token.token_size || 'medium')
   const pixW = span >= 1 ? Math.round(span) * cellSize - 4 : Math.round(cellSize * span) - 2
@@ -405,25 +382,27 @@ function TokenPiece({ token, selected, cellSize, isMoving, isDragged }: {
   const activeConds = CONDITIONS.filter(c => token.conditions.includes(c.id))
   const fontSize = Math.max(10, Math.min(pixW * 0.45, 32))
 
-  const borderClass = isMoving
-    ? 'border-emerald-400 shadow-lg shadow-emerald-500/30'
-    : selected
-      ? 'border-amber-500 shadow-lg shadow-amber-500/30 scale-105'
-      : token.token_type === 'player'
-        ? 'border-sky-700/70 shadow-sky-900/20'
-        : token.token_type === 'monster'
-          ? 'border-red-800/80 shadow-red-900/20'
-          : 'border-zinc-600/60'
+  const borderClass = isActiveTurn
+    ? 'border-amber-400 shadow-xl shadow-amber-500/40 scale-110'
+    : isMoving
+      ? 'border-emerald-400 shadow-lg shadow-emerald-500/30'
+      : selected
+        ? 'border-amber-500 shadow-lg shadow-amber-500/30 scale-105'
+        : token.token_type === 'player'
+          ? 'border-sky-700/70 shadow-sky-900/20'
+          : token.token_type === 'monster'
+            ? 'border-red-800/80 shadow-red-900/20'
+            : 'border-zinc-600/60'
 
-  const bgClass = token.token_type === 'player'
-    ? 'bg-slate-800/85'
-    : token.token_type === 'monster'
-      ? 'bg-stone-900/90'
-      : 'bg-zinc-800/80'
+  const bgClass = token.token_type === 'player' ? 'bg-slate-800/85'
+    : token.token_type === 'monster' ? 'bg-stone-900/90' : 'bg-zinc-800/80'
 
   return (
     <div style={{ width: pixW, height: pixH, userSelect: 'none', position: 'relative', opacity: isDragged ? 0.3 : 1 }}
       className={`flex flex-col items-center justify-center rounded-lg border-2 transition-all shadow-md ${borderClass} ${bgClass}`}>
+      {isActiveTurn && (
+        <div className="absolute -top-1 -right-1 w-3 h-3 bg-amber-400 rounded-full animate-pulse" />
+      )}
       <span style={{ fontSize, lineHeight: 1 }}>{token.icon}</span>
       {pixW >= 36 && (
         <span className="text-[8px] font-bold text-zinc-200/90 leading-tight max-w-full truncate px-0.5 mt-0.5">
@@ -451,8 +430,7 @@ function TokenPiece({ token, selected, cellSize, isMoving, isDragged }: {
       )}
       {token.token_size !== 'medium' && token.token_size !== 'small' && token.token_size !== 'tiny' && pixW >= 30 && (
         <div className="absolute bottom-0 right-0.5 text-[7px] text-zinc-400/80 font-bold bg-black/40 px-0.5 rounded">
-          {token.token_size === 'large' ? 'L' : token.token_size === 'huge' ? 'H' :
-           token.token_size === 'gargantuan' ? 'G' : 'K'}
+          {token.token_size === 'large' ? 'L' : token.token_size === 'huge' ? 'H' : token.token_size === 'gargantuan' ? 'G' : 'K'}
         </div>
       )}
     </div>
@@ -468,15 +446,11 @@ function TokenPanel({ token, onUpdate, onDelete, onClose, onEdit, isGM, myFavori
   movementInfo?: { used: number; speed: number; feetPerCell: number }
 }) {
   const [hpInput, setHpInput] = useState('')
-  const [showFavForm, setShowFavForm] = useState(false)
-  const [newFavName, setNewFavName] = useState('')
-  const [newFavAtk, setNewFavAtk] = useState('0')
-  const [newFavDmg, setNewFavDmg] = useState('0')
-  const [newFavDice, setNewFavDice] = useState<DiceConfig[]>([])
   const [showCondPicker, setShowCondPicker] = useState(false)
   const canEdit = isGM || ownToken
-  const DICE_TYPES = ['d4','d6','d8','d10','d12','d20']
   const remainingMove = movementInfo ? movementInfo.speed - movementInfo.used : null
+  const activeConds = CONDITIONS.filter(c => token.conditions.includes(c.id))
+  const availConds = CONDITIONS.filter(c => !token.conditions.includes(c.id))
 
   const applyHp = (delta: number) => {
     const cur = token.current_hp ?? token.max_hp ?? 0
@@ -485,25 +459,6 @@ function TokenPanel({ token, onUpdate, onDelete, onClose, onEdit, isGM, myFavori
   const applyHpAbsolute = (v: number) => {
     onUpdate({ current_hp: Math.max(0, Math.min(token.max_hp ?? 9999, v)) })
   }
-  const addFavoriteAction = () => {
-    if (!newFavName.trim() || newFavDice.length === 0) return
-    onUpdate({ favorite_actions: [...(token.favorite_actions ?? []), {
-      name: newFavName.trim(), attack_bonus: parseInt(newFavAtk)||0,
-      damage_bonus: parseInt(newFavDmg)||0, dice_config: newFavDice,
-    }]})
-    setNewFavName(''); setNewFavAtk('0'); setNewFavDmg('0'); setNewFavDice([]); setShowFavForm(false)
-  }
-  const favAdjDice = (type: string, delta: number) => {
-    setNewFavDice(prev => {
-      const idx = prev.findIndex(c => c.type === type)
-      if (idx === -1) return delta > 0 ? [...prev, { type, count: 1 }] : prev
-      const nc = prev[idx].count + delta
-      if (nc <= 0) return prev.filter((_, i) => i !== idx)
-      return prev.map((c, i) => i === idx ? { ...c, count: nc } : c)
-    })
-  }
-  const activeConds = CONDITIONS.filter(c => token.conditions.includes(c.id))
-  const availConds = CONDITIONS.filter(c => !token.conditions.includes(c.id))
 
   return (
     <div className="bg-zinc-950 border border-zinc-800 rounded-xl p-4 space-y-3 w-72">
@@ -523,21 +478,18 @@ function TokenPanel({ token, onUpdate, onDelete, onClose, onEdit, isGM, myFavori
         </div>
       </div>
 
-      {/* Quick Size Change */}
+      {/* Quick Size */}
       {canEdit && (
         <div className="flex items-center gap-2">
           <span className="text-[10px] uppercase font-semibold text-zinc-600 whitespace-nowrap">Größe</span>
-          <select
-            className="flex-1 bg-zinc-800/80 border border-zinc-700 rounded-lg px-2 py-1 text-xs text-zinc-300 focus:outline-none focus:border-red-700"
-            value={token.token_size ?? 'medium'}
-            onChange={e => onUpdate({ token_size: e.target.value as TokenSize })}
-          >
+          <select className="flex-1 bg-zinc-800/80 border border-zinc-700 rounded-lg px-2 py-1 text-xs text-zinc-300 focus:outline-none focus:border-red-700"
+            value={token.token_size ?? 'medium'} onChange={e => onUpdate({ token_size: e.target.value as TokenSize })}>
             {TOKEN_SIZES.map(s => <option key={s.id} value={s.id}>{s.label} ({s.gridLabel})</option>)}
           </select>
         </div>
       )}
 
-      {/* Bewegung */}
+      {/* Movement */}
       {(ownToken || isGM) && (token.speed ?? 0) > 0 && (
         <div className="space-y-1">
           {movementInfo && (
@@ -546,10 +498,11 @@ function TokenPanel({ token, onUpdate, onDelete, onClose, onEdit, isGM, myFavori
               <span className="text-zinc-400">Bewegung</span>
               <span className={`ml-auto font-bold tabular-nums ${remainingMove === 0 ? 'text-red-400' : 'text-sky-300'}`}>
                 {remainingMove} / {movementInfo.speed} ft
+                <span className="text-zinc-600 ml-1">({movementInfo.feetPerCell} ft/Feld)</span>
               </span>
             </div>
           )}
-          {movementInfo && movementInfo.speed > 0 && (
+          {movementInfo && (
             <div className="h-1.5 rounded-full bg-zinc-800">
               <div className="h-full rounded-full bg-sky-700 transition-all"
                 style={{ width: `${Math.max(0, (remainingMove! / movementInfo.speed) * 100)}%` }} />
@@ -562,8 +515,7 @@ function TokenPanel({ token, onUpdate, onDelete, onClose, onEdit, isGM, myFavori
                 : remainingMove === 0
                   ? 'bg-zinc-800/50 border-zinc-700/50 text-zinc-600 cursor-not-allowed'
                   : 'bg-sky-900/20 border-sky-700/40 text-sky-300 hover:bg-sky-900/40'
-            }`}
-            disabled={remainingMove === 0 && !moveMode}>
+            }`} disabled={remainingMove === 0 && !moveMode}>
             <Move className="w-3.5 h-3.5" />
             {moveMode ? 'Bewegungsmodus aktiv' : remainingMove === 0 ? 'Keine Bewegung mehr' : 'Bewegen (Klick-Modus)'}
           </button>
@@ -648,110 +600,33 @@ function TokenPanel({ token, onUpdate, onDelete, onClose, onEdit, isGM, myFavori
         {activeConds.length > 0 && (
           <div className="flex flex-wrap gap-1 mb-1.5">
             {activeConds.map(c => (
-              <span key={c.id} className={`text-[11px] px-1.5 py-0.5 rounded-full border flex items-center gap-1 ${c.bg} ${c.border} ${c.color}`}>
+              <button key={c.id} onClick={() => canEdit && onUpdate({ conditions: token.conditions.filter(x => x !== c.id) })}
+                className={`flex items-center gap-1 px-1.5 py-0.5 rounded-full text-[10px] border ${c.bg} ${c.border} ${c.color} ${canEdit ? 'hover:opacity-70' : ''}`}
+                title={canEdit ? 'Klicken zum Entfernen' : ''}>
                 {c.icon} {c.id}
-                {canEdit && (
-                  <button onClick={() => onUpdate({ conditions: token.conditions.filter(x => x !== c.id) })} className="opacity-60 hover:opacity-100 hover:text-red-400">
-                    <X className="w-2.5 h-2.5" />
-                  </button>
-                )}
-              </span>
+              </button>
             ))}
           </div>
         )}
-        {canEdit && (
-          <div className="relative">
-            <button onClick={() => setShowCondPicker(!showCondPicker)}
-              className="text-xs px-2.5 py-1 rounded-lg bg-zinc-800 border border-zinc-700 text-zinc-400 hover:text-zinc-200">
-              + Zustand
-            </button>
-            {showCondPicker && availConds.length > 0 && (
-              <div className="absolute bottom-7 left-0 z-10 bg-zinc-900 border border-zinc-700 rounded-xl p-2 shadow-2xl w-56 max-h-48 overflow-y-auto">
-                {availConds.map(c => (
-                  <button key={c.id} onClick={() => { onUpdate({ conditions: [...token.conditions, c.id] }); setShowCondPicker(false) }}
-                    className={`w-full flex items-center gap-2 px-2 py-1.5 rounded-lg text-xs text-left hover:bg-zinc-800 ${c.color}`}>
-                    {c.icon} {c.id}
-                  </button>
-                ))}
-              </div>
-            )}
+        {canEdit && availConds.length > 0 && (
+          <button onClick={() => setShowCondPicker(!showCondPicker)}
+            className="text-[10px] text-zinc-600 hover:text-zinc-400 flex items-center gap-1">
+            <Plus className="w-3 h-3" /> Zustand hinzufügen
+          </button>
+        )}
+        {showCondPicker && (
+          <div className="mt-1.5 grid grid-cols-2 gap-1 max-h-36 overflow-y-auto">
+            {availConds.map(c => (
+              <button key={c.id} onClick={() => { onUpdate({ conditions: [...token.conditions, c.id] }); setShowCondPicker(false) }}
+                className={`flex items-center gap-1.5 px-2 py-1 rounded-lg text-[10px] border ${c.bg} ${c.border} ${c.color} hover:opacity-80`}>
+                {c.icon} {c.id}
+              </button>
+            ))}
           </div>
         )}
       </div>
 
-      {token.notes && <p className="text-xs text-zinc-500 bg-zinc-800/40 rounded p-2 italic border border-zinc-700/40">{token.notes}</p>}
-
-      {/* Token Aktionen */}
-      {((token.favorite_actions?.length ?? 0) > 0 || (isGM && token.token_type !== 'player')) && (
-        <div className="space-y-1.5 pt-1 border-t border-zinc-800">
-          <div className="flex items-center justify-between">
-            <p className="text-[10px] uppercase font-semibold text-zinc-600 flex items-center gap-1">
-              <Bookmark className="w-3 h-3" /> Angriffe
-            </p>
-            {isGM && <button onClick={() => setShowFavForm(!showFavForm)} className="text-[10px] text-amber-600 hover:text-amber-400">+ Aktion</button>}
-          </div>
-          {(token.favorite_actions ?? []).map((fa, i) => (
-            <div key={i} className="flex items-center gap-1.5 px-2 py-1.5 rounded-lg bg-zinc-800/50 border border-zinc-700/50">
-              <div className="flex-1 min-w-0">
-                <p className="text-xs font-semibold text-zinc-200 truncate">{fa.name}</p>
-                <p className="text-[10px] text-zinc-500">
-                  Atk {modSign(fa.attack_bonus)} · {fa.dice_config.map(c => `${c.count}×${c.type}`).join('+')}
-                  {fa.damage_bonus !== 0 ? modSign(fa.damage_bonus) : ''}
-                </p>
-              </div>
-              <button onClick={() => onRoll([{type:'d20',count:1}], fa.attack_bonus, `${token.name}: ${fa.name} Atk`)}
-                className="px-1.5 py-1 rounded bg-amber-900/40 border border-amber-700/50 text-[10px] text-amber-200 hover:bg-amber-900/70">Atk</button>
-              <button onClick={() => onRoll(fa.dice_config, fa.damage_bonus, `${token.name}: ${fa.name} Schaden`)}
-                className="px-1.5 py-1 rounded bg-red-950/50 border border-red-800/50 text-[10px] text-red-300 hover:bg-red-900/50">Dmg</button>
-              {isGM && (
-                <button onClick={() => onUpdate({ favorite_actions: token.favorite_actions.filter((_, idx) => idx !== i) })}
-                  className="text-zinc-700 hover:text-red-500"><X className="w-3 h-3" /></button>
-              )}
-            </div>
-          ))}
-          {showFavForm && isGM && (
-            <div className="bg-zinc-800/40 rounded-lg p-2.5 space-y-2 border border-zinc-700/60">
-              <input className="w-full bg-zinc-800 border border-zinc-700 rounded-lg px-2 py-1.5 text-xs text-zinc-100 placeholder-zinc-600 focus:outline-none"
-                placeholder="Aktionsname…" value={newFavName} onChange={e => setNewFavName(e.target.value)} />
-              <div className="grid grid-cols-2 gap-1.5">
-                <div>
-                  <label className="text-[9px] text-zinc-600">Atk Bonus</label>
-                  <input type="number" className="w-full bg-zinc-800 border border-zinc-700 rounded px-2 py-1 text-xs text-zinc-100 text-center focus:outline-none"
-                    value={newFavAtk} onChange={e => setNewFavAtk(e.target.value)} />
-                </div>
-                <div>
-                  <label className="text-[9px] text-zinc-600">Schad Bonus</label>
-                  <input type="number" className="w-full bg-zinc-800 border border-zinc-700 rounded px-2 py-1 text-xs text-zinc-100 text-center focus:outline-none"
-                    value={newFavDmg} onChange={e => setNewFavDmg(e.target.value)} />
-                </div>
-              </div>
-              <div className="flex gap-1 flex-wrap">
-                {DICE_TYPES.map(t => {
-                  const cnt = newFavDice.find(c => c.type === t)?.count ?? 0
-                  return (
-                    <div key={t} className="flex items-center gap-0.5">
-                      <button onClick={() => favAdjDice(t, -1)} className="w-4 h-4 text-zinc-500 hover:text-zinc-300 text-xs">−</button>
-                      <button onClick={() => favAdjDice(t, 1)}
-                        className={`px-1.5 py-0.5 rounded text-[10px] font-bold border ${cnt > 0 ? 'bg-red-900/30 border-red-700 text-red-200' : 'bg-zinc-800 border-zinc-700 text-zinc-500'}`}>
-                        {cnt > 0 ? `${cnt}×` : ''}{t}
-                      </button>
-                    </div>
-                  )
-                })}
-              </div>
-              <div className="flex gap-1.5">
-                <button onClick={() => setShowFavForm(false)} className="flex-1 py-1 rounded-lg bg-zinc-700 text-xs text-zinc-400">Abbrechen</button>
-                <button onClick={addFavoriteAction} disabled={!newFavName.trim() || newFavDice.length === 0}
-                  className="flex-1 py-1 rounded-lg bg-red-900 disabled:opacity-40 text-xs text-white font-semibold">
-                  <BookmarkCheck className="w-3 h-3 inline mr-1" />Hinzufügen
-                </button>
-              </div>
-            </div>
-          )}
-        </div>
-      )}
-
-      {/* Würfelfavoriten */}
+      {/* Favorites */}
       {(ownToken || (isGM && token.token_type === 'player')) && myFavorites.length > 0 && (
         <div className="space-y-1.5 pt-1 border-t border-zinc-800">
           <p className="text-[10px] uppercase font-semibold text-zinc-600 flex items-center gap-1">
@@ -788,6 +663,10 @@ function TokenPanel({ token, onUpdate, onDelete, onClose, onEdit, isGM, myFavori
           </button>
         </div>
       )}
+
+      {token.notes && (
+        <p className="text-[11px] text-zinc-500 italic border-t border-zinc-800 pt-2">{token.notes}</p>
+      )}
     </div>
   )
 }
@@ -815,6 +694,9 @@ export default function BattleMapPage() {
   const [myTokenInitial, setMyTokenInitial] = useState<Partial<typeof BLANK_TOKEN_FORM>>({ token_type: 'player', icon: '🧙' })
   const [hoverCoord, setHoverCoord] = useState<{col:number;row:number} | null>(null)
 
+  // Fog of War
+  const [fogMode, setFogMode] = useState(false)
+
   // Movement
   const [moveMode, setMoveMode] = useState(false)
   const [movingTokenId, setMovingTokenId] = useState<string | null>(null)
@@ -835,22 +717,48 @@ export default function BattleMapPage() {
   const [isDraggingResize, setIsDraggingResize] = useState(false)
   const [resizeDragStart, setResizeDragStart] = useState({ x: 0, y: 0, cellSize: 50, canvasW: 1200, canvasH: 800 })
 
-  // Drag & Drop
-  // All drag state in ref to avoid stale closures
+  // Initiative Timer (local state)
+  const [timerRemaining, setTimerRemaining] = useState(60)
+  const [timerRunning, setTimerRunning] = useState(false)
+  const timerIntervalRef = useRef<ReturnType<typeof setInterval> | null>(null)
+
+  // Drag & Drop – all drag state in ref to avoid stale closures
   const dragStateRef = useRef<{
     tokenId: string; startX: number; startY: number
     dragging: boolean; hoverCol: number | null; hoverRow: number | null
   } | null>(null)
   const [dragRender, setDragRender] = useState<{ tokenId: string; hoverCell: { col: number; row: number } | null } | null>(null)
 
+  // Mutable refs for use inside window event listeners
   const mapRef = useRef<HTMLDivElement>(null)
   const activeMapRef = useRef<BattleMap | null>(null)
+  const tokensRef = useRef<BattleToken[]>([])
+  const isGMRef = useRef(false)
+  const userRef = useRef(user)
+
   useEffect(() => { activeMapRef.current = activeMap }, [activeMap])
+  useEffect(() => { tokensRef.current = tokens }, [tokens])
+  useEffect(() => { isGMRef.current = isGM }, [isGM])
+  useEffect(() => { userRef.current = user }, [user])
 
   // ── Computed ──
   const cs = activeMap?.cell_size ?? 50
   const ox = activeMap?.grid_offset_x ?? 0
   const oy = activeMap?.grid_offset_y ?? 0
+  const initiativeData: InitiativeData = activeMap?.initiative_data ?? { round: 1, current_turn: 0, timer_seconds: 60, active: false }
+
+  const sortedInitiative = useMemo(() =>
+    [...tokens].sort((a, b) => (b.initiative ?? 0) - (a.initiative ?? 0)),
+    [tokens]
+  )
+  const activeTurnToken = sortedInitiative.length > 0
+    ? sortedInitiative[initiativeData.current_turn % sortedInitiative.length]
+    : null
+
+  const fogSet = useMemo(() =>
+    new Set((activeMap?.fog_cells ?? []).map(f => `${f.col},${f.row}`)),
+    [activeMap?.fog_cells]
+  )
 
   const reachableCells = useMemo(() => {
     if (!moveMode || !movingTokenId || !activeMap) return new Map<string, number>()
@@ -867,10 +775,47 @@ export default function BattleMapPage() {
     if (!moveMode || !movingTokenId || !hoverCell) return []
     const token = tokens.find(t => t.id === movingTokenId)
     if (!token) return []
-    const key = `${hoverCell.col},${hoverCell.row}`
-    if (!reachableCells.has(key)) return []
+    if (!reachableCells.has(`${hoverCell.col},${hoverCell.row}`)) return []
     return buildPath({ col: token.col, row: token.row }, hoverCell, reachableCells)
   }, [moveMode, movingTokenId, hoverCell, reachableCells, tokens])
+
+  // ── Timer ──
+  // Reset local timer when turn changes
+  const prevTurnRef = useRef<number>(-1)
+  useEffect(() => {
+    const curTurn = initiativeData.current_turn
+    if (curTurn !== prevTurnRef.current && prevTurnRef.current !== -1) {
+      setTimerRemaining(initiativeData.timer_seconds)
+    }
+    prevTurnRef.current = curTurn
+  }, [initiativeData.current_turn, initiativeData.timer_seconds])
+
+  useEffect(() => {
+    if (timerRunning) {
+      timerIntervalRef.current = setInterval(() => {
+        setTimerRemaining(v => {
+          if (v <= 1) {
+            clearInterval(timerIntervalRef.current!)
+            timerIntervalRef.current = null
+            setTimerRunning(false)
+            return 0
+          }
+          return v - 1
+        })
+      }, 1000)
+      return () => { if (timerIntervalRef.current) clearInterval(timerIntervalRef.current) }
+    }
+  }, [timerRunning])
+
+  const toggleTimer = () => {
+    if (timerRunning) {
+      if (timerIntervalRef.current) { clearInterval(timerIntervalRef.current); timerIntervalRef.current = null }
+      setTimerRunning(false)
+    } else {
+      if (timerRemaining <= 0) setTimerRemaining(initiativeData.timer_seconds)
+      setTimerRunning(true)
+    }
+  }
 
   // ── Global drag & drop handlers (registered once) ──
   useEffect(() => {
@@ -902,11 +847,30 @@ export default function BattleMapPage() {
       const ds = dragStateRef.current
       if (!ds) return
       if (!ds.dragging) {
-        // was a click: toggle selection
         setSelectedToken(prev => prev === ds.tokenId ? null : ds.tokenId)
       } else if (ds.hoverCol !== null && ds.hoverRow !== null) {
         const col = ds.hoverCol, row = ds.hoverRow
         const tokenId = ds.tokenId
+        const map = activeMapRef.current
+        const allTokens = tokensRef.current
+        const token = allTokens.find(t => t.id === tokenId)
+
+        // Movement budget enforcement for non-GM players
+        if (!isGMRef.current && token && token.speed !== null && map) {
+          const fpc = map.feet_per_cell ?? 5
+          const distCells = Math.abs(col - token.col) + Math.abs(row - token.row)
+          const distFeet = distCells * fpc
+          const remaining = token.speed - (token.movement_used ?? 0)
+          if (distFeet > remaining) {
+            dragStateRef.current = null; setDragRender(null); return
+          }
+          // Deduct movement cost
+          const patch = { col, row, movement_used: (token.movement_used ?? 0) + distFeet }
+          await supabase.from('battle_tokens').update(patch).eq('id', tokenId)
+          setTokens(prev => prev.map(t => t.id === tokenId ? { ...t, ...patch } : t))
+          dragStateRef.current = null; setDragRender(null); return
+        }
+
         await supabase.from('battle_tokens').update({ col, row }).eq('id', tokenId)
         setTokens(prev => prev.map(t => t.id === tokenId ? { ...t, col, row } : t))
       }
@@ -920,7 +884,7 @@ export default function BattleMapPage() {
       window.removeEventListener('mousemove', onMove)
       window.removeEventListener('mouseup', onUp)
     }
-  }, [supabase]) // only supabase in deps; all other values via refs
+  }, [supabase])
 
   // ── Arrow key movement ──
   useEffect(() => {
@@ -930,13 +894,10 @@ export default function BattleMapPage() {
       const dirs: Record<string, [number, number]> = {
         ArrowLeft: [-1, 0], ArrowRight: [1, 0], ArrowUp: [0, -1], ArrowDown: [0, 1],
       }
-      const dir = dirs[e.key]
-      if (!dir) return
+      const dir = dirs[e.key]; if (!dir) return
       e.preventDefault()
-      const token = tokens.find(t => t.id === selectedToken)
-      if (!token) return
-      const canMove = isGM || token.player_user_id === user?.id
-      if (!canMove) return
+      const token = tokens.find(t => t.id === selectedToken); if (!token) return
+      const canMove = isGM || token.player_user_id === user?.id; if (!canMove) return
       const nc = token.col + dir[0], nr = token.row + dir[1]
       if (nc < 0 || nr < 0 || nc >= activeMap.grid_cols || nr >= activeMap.grid_rows) return
       const span = Math.max(1, Math.ceil(getSizeSpan(token.token_size)))
@@ -961,12 +922,11 @@ export default function BattleMapPage() {
     return () => window.removeEventListener('keydown', onKey)
   }, [selectedToken, tokens, activeMap, isGM, user, supabase])
 
-  // ── Grid resize mouse handlers (fixed) ──
+  // ── Grid resize mouse handlers ──
   const handleResizeMouseMove = useCallback((e: MouseEvent) => {
     if (!isDraggingResize || !activeMap) return
     const delta = ((e.clientX - resizeDragStart.x) + (e.clientY - resizeDragStart.y)) / 2
     const newSize = Math.max(20, Math.min(150, Math.round(resizeDragStart.cellSize + delta)))
-    // Keep canvas dimensions constant — only change grid resolution
     const newCols = Math.max(4, Math.round(resizeDragStart.canvasW / newSize))
     const newRows = Math.max(4, Math.round(resizeDragStart.canvasH / newSize))
     setActiveMap(prev => prev ? { ...prev, cell_size: newSize, grid_cols: newCols, grid_rows: newRows } : prev)
@@ -976,9 +936,7 @@ export default function BattleMapPage() {
     if (!isDraggingResize || !activeMap) return
     setIsDraggingResize(false)
     await supabase.from('battle_maps').update({
-      cell_size: activeMap.cell_size,
-      grid_cols: activeMap.grid_cols,
-      grid_rows: activeMap.grid_rows,
+      cell_size: activeMap.cell_size, grid_cols: activeMap.grid_cols, grid_rows: activeMap.grid_rows,
     }).eq('id', activeMap.id)
   }, [isDraggingResize, activeMap, supabase])
 
@@ -999,12 +957,22 @@ export default function BattleMapPage() {
   const loadMaps = useCallback(async () => {
     const { data } = await supabase.from('battle_maps').select('*').order('created_at', { ascending: false })
     const parsed = (data ?? []).map((m: any) => ({
-      ...m, difficult_terrain: m.difficult_terrain ?? [], map_effects: m.map_effects ?? [],
-      feet_per_cell: m.feet_per_cell ?? 5, grid_locked: m.grid_locked !== false,
+      ...m,
+      difficult_terrain: m.difficult_terrain ?? [],
+      map_effects: m.map_effects ?? [],
+      feet_per_cell: m.feet_per_cell ?? 5,
+      grid_locked: m.grid_locked !== false,
+      fog_cells: m.fog_cells ?? [],
+      grid_color: m.grid_color ?? '#C8B496',
+      initiative_data: m.initiative_data ?? { round: 1, current_turn: 0, timer_seconds: 60, active: false },
     }))
     setMaps(parsed)
-    if (!activeMap && parsed[0]) setActiveMap(parsed[0])
-  }, [supabase, activeMap])
+    setActiveMap(prev => {
+      if (!prev) return parsed[0] ?? null
+      const updated = parsed.find((m: BattleMap) => m.id === prev.id)
+      return updated ?? prev
+    })
+  }, [supabase])
 
   const loadTokens = useCallback(async (mapId: string) => {
     const { data } = await supabase.from('battle_tokens').select('*').eq('map_id', mapId)
@@ -1020,8 +988,17 @@ export default function BattleMapPage() {
     setMyFavorites((data ?? []) as DiceFavorite[])
   }, [user, supabase])
 
-  useEffect(() => { loadMaps() }, [loadMaps])
+  // Realtime for battle_maps (syncs initiative data, fog, etc. to all clients)
+  useEffect(() => {
+    loadMaps()
+    const ch = supabase.channel('battle_maps_rt')
+      .on('postgres_changes', { event: 'UPDATE', schema: 'public', table: 'battle_maps' }, () => loadMaps())
+      .subscribe()
+    return () => { supabase.removeChannel(ch) }
+  }, [loadMaps, supabase])
+
   useEffect(() => { loadMyFavorites() }, [loadMyFavorites])
+
   useEffect(() => {
     if (!activeMap) return
     loadTokens(activeMap.id)
@@ -1030,7 +1007,7 @@ export default function BattleMapPage() {
         () => loadTokens(activeMap.id))
       .subscribe()
     return () => { supabase.removeChannel(channel) }
-  }, [activeMap, loadTokens, supabase])
+  }, [activeMap?.id, loadTokens, supabase])
 
   // ── Map CRUD ──
   const createMap = async () => {
@@ -1039,12 +1016,13 @@ export default function BattleMapPage() {
     const rows = parseInt(newMapForm.grid_rows) || 16
     const size = parseInt(newMapForm.cell_size) || 50
     const { data } = await supabase.from('battle_maps').insert({
-      name: newMapForm.name || 'Neue Karte',
-      image_url: newMapForm.image_url || null,
+      name: newMapForm.name || 'Neue Karte', image_url: newMapForm.image_url || null,
       grid_cols: cols, grid_rows: rows, cell_size: size,
       is_active: true, created_by: user.id,
       grid_opacity: 0.15, grid_offset_x: 0, grid_offset_y: 0,
       difficult_terrain: [], map_effects: [], feet_per_cell: 5, grid_locked: true,
+      fog_cells: [], grid_color: '#C8B496',
+      initiative_data: { round: 1, current_turn: 0, timer_seconds: 60, active: false },
     }).select().single()
     if (data) { setActiveMap(data as BattleMap); setShowMapForm(false); loadMaps() }
   }
@@ -1137,38 +1115,54 @@ export default function BattleMapPage() {
   // ── Token drag handler ──
   const handleTokenMouseDown = useCallback((e: React.MouseEvent, token: BattleToken) => {
     const canEdit = isGM || token.player_user_id === user?.id
-    if (!canEdit || terrainMode || effectMode || moveMode) return
+    if (!canEdit || terrainMode || effectMode || moveMode || fogMode) return
     e.preventDefault(); e.stopPropagation()
     dragStateRef.current = {
       tokenId: token.id, startX: e.clientX, startY: e.clientY,
       dragging: false, hoverCol: null, hoverRow: null,
     }
-  }, [isGM, user, terrainMode, effectMode, moveMode])
+  }, [isGM, user, terrainMode, effectMode, moveMode, fogMode])
 
   // ── Movement handlers ──
   const startMove = (tokenId: string) => {
-    if (moveMode && movingTokenId === tokenId) {
-      setMoveMode(false); setMovingTokenId(null); setMoveTarget(null)
-    } else {
-      setMoveMode(true); setMovingTokenId(tokenId); setMoveTarget(null)
-    }
+    if (moveMode && movingTokenId === tokenId) { setMoveMode(false); setMovingTokenId(null); setMoveTarget(null) }
+    else { setMoveMode(true); setMovingTokenId(tokenId); setMoveTarget(null) }
   }
 
   const confirmMove = async () => {
     if (!moveTarget || !movingTokenId || !activeMap) return
-    const token = tokens.find(t => t.id === movingTokenId)
-    if (!token) return
+    const token = tokens.find(t => t.id === movingTokenId); if (!token) return
     const cost = reachableCells.get(`${moveTarget.col},${moveTarget.row}`) ?? 0
     await updateToken(movingTokenId, { col: moveTarget.col, row: moveTarget.row, movement_used: (token.movement_used ?? 0) + cost })
     setMoveMode(false); setMovingTokenId(null); setMoveTarget(null); setHoverCell(null)
   }
 
   const cancelMove = () => { setMoveMode(false); setMovingTokenId(null); setMoveTarget(null); setHoverCell(null) }
+
   const resetAllMovement = async () => {
     if (!activeMap) return
     await Promise.all(tokens.map(t => supabase.from('battle_tokens').update({ movement_used: 0 }).eq('id', t.id)))
     setTokens(prev => prev.map(t => ({ ...t, movement_used: 0 })))
   }
+
+  // ── Fog of War ──
+  const toggleFog = (col: number, row: number) => {
+    if (!activeMap) return
+    const fc = activeMap.fog_cells ?? []
+    const idx = fc.findIndex(f => f.col === col && f.row === row)
+    updateMap({ fog_cells: idx === -1 ? [...fc, { col, row }] : fc.filter((_, i) => i !== idx) })
+  }
+
+  const fillFog = () => {
+    if (!activeMap) return
+    const cells: { col: number; row: number }[] = []
+    for (let c = 0; c < activeMap.grid_cols; c++)
+      for (let r = 0; r < activeMap.grid_rows; r++)
+        cells.push({ col: c, row: r })
+    updateMap({ fog_cells: cells })
+  }
+
+  const clearFog = () => { if (activeMap) updateMap({ fog_cells: [] }) }
 
   // ── Terrain / Effects ──
   const toggleTerrain = (col: number, row: number) => {
@@ -1194,7 +1188,7 @@ export default function BattleMapPage() {
       id: `${Date.now()}-${Math.random()}`, type: pendingEffect.type,
       col: pendingEffect.col, row: pendingEffect.row,
       icon: et?.icon ?? '⭕', color: pendingColor,
-      radius: pendingEffect.type === 'circle' || pendingEffect.type === 'aura' ? pendingRadius : undefined,
+      radius: (pendingEffect.type === 'circle' || pendingEffect.type === 'aura') ? pendingRadius : undefined,
       length: pendingEffect.type === 'line' ? pendingRadius : undefined,
       angle: pendingEffect.type === 'cone' ? pendingAngle : undefined,
       direction: (pendingEffect.type === 'cone' || pendingEffect.type === 'line') ? pendingDirection : undefined,
@@ -1205,6 +1199,36 @@ export default function BattleMapPage() {
   const removeEffect = (id: string) => {
     if (!activeMap) return
     updateMap({ map_effects: (activeMap.map_effects ?? []).filter(e => e.id !== id) })
+  }
+
+  // ── Initiative Tracker ──
+  const advanceTurn = async () => {
+    if (!activeMap || sortedInitiative.length === 0) return
+    const nextTurn = (initiativeData.current_turn + 1) % sortedInitiative.length
+    const nextRound = nextTurn === 0 ? initiativeData.round + 1 : initiativeData.round
+    const newData = { ...initiativeData, current_turn: nextTurn, round: nextRound }
+    setActiveMap(prev => prev ? { ...prev, initiative_data: newData } : prev)
+    await supabase.from('battle_maps').update({ initiative_data: newData }).eq('id', activeMap.id)
+    setTimerRemaining(initiativeData.timer_seconds)
+    if (timerRunning) { /* timer already running, just reset */ }
+  }
+
+  const prevTurnFn = async () => {
+    if (!activeMap || sortedInitiative.length === 0) return
+    const prev = (initiativeData.current_turn - 1 + sortedInitiative.length) % sortedInitiative.length
+    const prevRound = initiativeData.current_turn === 0 && initiativeData.round > 1
+      ? initiativeData.round - 1 : initiativeData.round
+    const newData = { ...initiativeData, current_turn: prev, round: prevRound }
+    setActiveMap(m => m ? { ...m, initiative_data: newData } : m)
+    await supabase.from('battle_maps').update({ initiative_data: newData }).eq('id', activeMap.id)
+  }
+
+  const resetInitiative = async () => {
+    if (!activeMap) return
+    const newData: InitiativeData = { round: 1, current_turn: 0, timer_seconds: initiativeData.timer_seconds, active: false }
+    setActiveMap(m => m ? { ...m, initiative_data: newData } : m)
+    await supabase.from('battle_maps').update({ initiative_data: newData }).eq('id', activeMap.id)
+    setTimerRunning(false); setTimerRemaining(newData.timer_seconds)
   }
 
   // ── Grid click / move ──
@@ -1218,9 +1242,9 @@ export default function BattleMapPage() {
   }
 
   const handleGridClick = (e: React.MouseEvent<HTMLDivElement>) => {
-    if (dragRender?.tokenId) return // don't process click during drag
-    const cell = getCellFromEvent(e)
-    if (!cell) return
+    if (dragRender?.tokenId) return
+    const cell = getCellFromEvent(e); if (!cell) return
+    if (fogMode && isGM) { toggleFog(cell.col, cell.row); return }
     if (terrainMode && isGM) { toggleTerrain(cell.col, cell.row); return }
     if (effectMode) {
       const et = EFFECT_TYPES.find(x => x.id === effectMode)
@@ -1242,8 +1266,7 @@ export default function BattleMapPage() {
   const handleGridMouseMove = (e: React.MouseEvent<HTMLDivElement>) => {
     const cell = getCellFromEvent(e)
     setHoverCoord(cell)
-    if (moveMode) setHoverCell(cell)
-    else setHoverCell(null)
+    if (moveMode) setHoverCell(cell); else setHoverCell(null)
   }
 
   // ── Roll ──
@@ -1258,15 +1281,16 @@ export default function BattleMapPage() {
   }
 
   const sel = selectedToken ? tokens.find(t => t.id === selectedToken) ?? null : null
-  const visibleTokens = isGM ? tokens : tokens.filter(t => !t.is_hidden)
+  const visibleTokens = isGM ? tokens : tokens.filter(t => !t.is_hidden && !fogSet.has(`${t.col},${t.row}`))
   const movingToken = movingTokenId ? tokens.find(t => t.id === movingTokenId) : null
+  const concentratingTokens = tokens.filter(t => t.conditions.includes('Konzentration'))
+  const playerTokens = tokens.filter(t => t.token_type === 'player')
 
   // ── SVG helpers ──
   const cellPx = (col: number, row: number) => ({ x: col * cs + ox, y: row * cs + oy })
 
   const renderAoeCircle = (eff: MapEffect) => {
-    const cx = (eff.col + 0.5) * cs + ox, cy = (eff.row + 0.5) * cs + oy
-    const r = (eff.radius ?? 3) * cs
+    const cx = (eff.col + 0.5) * cs + ox, cy = (eff.row + 0.5) * cs + oy, r = (eff.radius ?? 3) * cs
     return (
       <g key={eff.id}>
         <circle cx={cx} cy={cy} r={r} fill={`${eff.color}1a`} stroke={eff.color} strokeWidth="2" strokeDasharray="8 4" />
@@ -1284,10 +1308,8 @@ export default function BattleMapPage() {
     const x2 = ax + len * Math.cos(dir + half), y2 = ay + len * Math.sin(dir + half)
     return (
       <g key={eff.id}>
-        <polygon points={`${ax},${ay} ${x1},${y1} ${x2},${y2}`}
-          fill={`${eff.color}28`} stroke={eff.color} strokeWidth="2" strokeDasharray="8 4" />
-        <text x={ax + len * 0.45 * Math.cos(dir)} y={ay + len * 0.45 * Math.sin(dir)}
-          textAnchor="middle" dominantBaseline="middle" fontSize="14">{eff.icon ?? '🔺'}</text>
+        <polygon points={`${ax},${ay} ${x1},${y1} ${x2},${y2}`} fill={`${eff.color}28`} stroke={eff.color} strokeWidth="2" strokeDasharray="8 4" />
+        <text x={ax + len * 0.45 * Math.cos(dir)} y={ay + len * 0.45 * Math.sin(dir)} textAnchor="middle" dominantBaseline="middle" fontSize="14">{eff.icon ?? '🔺'}</text>
       </g>
     )
   }
@@ -1306,8 +1328,7 @@ export default function BattleMapPage() {
   }
 
   const renderAoeAura = (eff: MapEffect) => {
-    const cx = (eff.col + 0.5) * cs + ox, cy = (eff.row + 0.5) * cs + oy
-    const r = (eff.radius ?? 2) * cs
+    const cx = (eff.col + 0.5) * cs + ox, cy = (eff.row + 0.5) * cs + oy, r = (eff.radius ?? 2) * cs
     return (
       <g key={eff.id}>
         <circle cx={cx} cy={cy} r={r} fill={`${eff.color}15`} stroke={eff.color} strokeWidth="2" strokeDasharray="4 2" />
@@ -1317,7 +1338,7 @@ export default function BattleMapPage() {
     )
   }
 
-  // ── Drag snap preview validity check ──
+  // ── Drag snap validity ──
   const isDragCellValid = dragRender?.hoverCell ? (() => {
     const dtoken = tokens.find(t => t.id === dragRender.tokenId)
     if (!dtoken || !dragRender.hoverCell) return false
@@ -1332,6 +1353,17 @@ export default function BattleMapPage() {
 
   const effectCategories = ['hazard', 'terrain', 'magic', 'aoe'] as const
   const catLabel: Record<string, string> = { hazard: 'Gefahren', terrain: 'Gelände', magic: 'Magie', aoe: 'Flächeneffekte' }
+
+  // ── Timer display ──
+  const timerMin = Math.floor(timerRemaining / 60).toString().padStart(2, '0')
+  const timerSec = (timerRemaining % 60).toString().padStart(2, '0')
+  const timerPct = initiativeData.timer_seconds > 0 ? timerRemaining / initiativeData.timer_seconds : 1
+  const timerColor = timerPct > 0.5 ? '#4ade80' : timerPct > 0.25 ? '#facc15' : '#f87171'
+
+  // ── Plus icon for conditions ──
+  function Plus({ className }: { className?: string }) {
+    return <svg className={className} viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth={2}><line x1={12} y1={5} x2={12} y2={19}/><line x1={5} y1={12} x2={19} y2={12}/></svg>
+  }
 
   return (
     <div className="flex flex-col h-[calc(100vh-4rem)] md:h-screen overflow-hidden bg-zinc-950">
@@ -1361,18 +1393,19 @@ export default function BattleMapPage() {
                     className={`flex items-center gap-1 px-2 py-1.5 rounded border text-xs transition-colors ${showGridControls ? 'bg-zinc-700/60 border-zinc-500 text-zinc-200' : 'bg-zinc-800/80 border-zinc-700/60 text-zinc-500 hover:text-zinc-300'}`}>
                     <SlidersHorizontal className="w-3 h-3" /> Gitter
                   </button>
-                  <button
-                    onClick={() => updateMap({ grid_locked: !(activeMap.grid_locked) })}
-                    className={`flex items-center gap-1 px-2 py-1.5 rounded border text-xs transition-colors ${
-                      !activeMap.grid_locked ? 'bg-amber-900/30 border-amber-700/60 text-amber-300' : 'bg-zinc-800/80 border-zinc-700/60 text-zinc-500 hover:text-zinc-300'
-                    }`}
-                    title={activeMap.grid_locked ? 'Gitter entsperren' : 'Gitter sperren'}>
+                  <button onClick={() => updateMap({ grid_locked: !(activeMap.grid_locked) })}
+                    className={`flex items-center gap-1 px-2 py-1.5 rounded border text-xs transition-colors ${!activeMap.grid_locked ? 'bg-amber-900/30 border-amber-700/60 text-amber-300' : 'bg-zinc-800/80 border-zinc-700/60 text-zinc-500 hover:text-zinc-300'}`}>
                     {activeMap.grid_locked ? <Lock className="w-3 h-3" /> : <Unlock className="w-3 h-3" />}
                     {activeMap.grid_locked ? 'Gesperrt' : 'Entsperrt'}
                   </button>
-                  <button onClick={() => { setTerrainMode(!terrainMode); setEffectMode(null) }}
+                  <button onClick={() => { setTerrainMode(!terrainMode); setEffectMode(null); setFogMode(false) }}
                     className={`flex items-center gap-1 px-2 py-1.5 rounded border text-xs transition-colors ${terrainMode ? 'bg-orange-950/40 border-orange-700/60 text-orange-300' : 'bg-zinc-800/80 border-zinc-700/60 text-zinc-500 hover:text-zinc-300'}`}>
-                    Schwieriges Gelände
+                    Gelände
+                  </button>
+                  {/* Fog of War Button */}
+                  <button onClick={() => { setFogMode(!fogMode); setTerrainMode(false); setEffectMode(null) }}
+                    className={`flex items-center gap-1 px-2 py-1.5 rounded border text-xs transition-colors ${fogMode ? 'bg-slate-700/60 border-slate-500/60 text-slate-200' : 'bg-zinc-800/80 border-zinc-700/60 text-zinc-500 hover:text-zinc-300'}`}>
+                    <Cloud className="w-3 h-3" /> Nebel
                   </button>
                   <button onClick={() => setShowAddModal(true)}
                     className="flex items-center gap-1 px-2 py-1.5 rounded bg-zinc-700/60 border border-zinc-600/60 text-xs text-zinc-300 hover:bg-zinc-700">
@@ -1397,7 +1430,7 @@ export default function BattleMapPage() {
           )}
 
           {activeMap && (
-            <button onClick={() => { setShowEffectsPanel(!showEffectsPanel); setTerrainMode(false) }}
+            <button onClick={() => { setShowEffectsPanel(!showEffectsPanel); setTerrainMode(false); setFogMode(false) }}
               className={`flex items-center gap-1 px-2 py-1.5 rounded border text-xs transition-colors ${showEffectsPanel || effectMode ? 'bg-purple-950/40 border-purple-700/60 text-purple-300' : 'bg-zinc-800/80 border-zinc-700/60 text-zinc-500 hover:text-zinc-300'}`}>
               <Flame className="w-3 h-3" /> Effekte
             </button>
@@ -1416,6 +1449,9 @@ export default function BattleMapPage() {
                 <button key={t} onClick={() => setActiveTab(t)}
                   className={`px-3 py-1.5 text-xs font-medium transition-colors ${activeTab === t ? 'bg-zinc-700 text-zinc-100' : 'bg-zinc-800/80 text-zinc-500 hover:text-zinc-300'}`}>
                   {t === 'map' ? 'Karte' : 'Initiative'}
+                  {t === 'tracker' && activeTurnToken && (
+                    <span className="ml-1.5 w-1.5 h-1.5 inline-block rounded-full bg-amber-400 animate-pulse" />
+                  )}
                 </button>
               ))}
             </div>
@@ -1431,9 +1467,14 @@ export default function BattleMapPage() {
             <div className="flex items-center gap-2">
               <label className="text-xs text-zinc-500">Deckkraft</label>
               <input type="range" min="0" max="0.6" step="0.01" value={activeMap.grid_opacity}
-                onChange={e => updateMap({ grid_opacity: parseFloat(e.target.value) })}
-                className="w-28 accent-zinc-500" />
+                onChange={e => updateMap({ grid_opacity: parseFloat(e.target.value) })} className="w-28 accent-zinc-500" />
               <span className="text-xs text-zinc-400 w-8">{Math.round(activeMap.grid_opacity * 100)}%</span>
+            </div>
+            <div className="flex items-center gap-2">
+              <label className="text-xs text-zinc-500">Gitterfarbe</label>
+              <input type="color" value={activeMap.grid_color ?? '#C8B496'}
+                onChange={e => updateMap({ grid_color: e.target.value })}
+                className="w-9 h-7 rounded cursor-pointer border border-zinc-700 bg-transparent p-0.5" />
             </div>
             {[
               { label: 'Offset X', key: 'grid_offset_x' }, { label: 'Offset Y', key: 'grid_offset_y' },
@@ -1449,8 +1490,7 @@ export default function BattleMapPage() {
             <div className="flex items-center gap-2">
               <label className="text-xs text-zinc-500">Fuß/Feld</label>
               <select className="bg-zinc-800 border border-zinc-700 rounded px-2 py-1 text-xs text-zinc-100 focus:outline-none"
-                value={activeMap.feet_per_cell ?? 5}
-                onChange={e => updateMap({ feet_per_cell: parseInt(e.target.value) })}>
+                value={activeMap.feet_per_cell ?? 5} onChange={e => updateMap({ feet_per_cell: parseInt(e.target.value) })}>
                 {[5,10,15,20].map(v => <option key={v} value={v}>{v} ft</option>)}
               </select>
             </div>
@@ -1458,6 +1498,27 @@ export default function BattleMapPage() {
           {!activeMap.grid_locked && (
             <p className="text-xs text-amber-600/80">Gitter entsperrt — ziehe den Griff unten rechts. Das Bild bleibt fixiert; nur die Gitterteilung ändert sich.</p>
           )}
+        </div>
+      )}
+
+      {/* ── Fog Controls (when fog mode active) ── */}
+      {fogMode && isGM && activeMap && (
+        <div className="flex-shrink-0 px-4 py-2 bg-slate-900/80 border-b border-slate-700/60 flex items-center gap-3">
+          <Cloud className="w-4 h-4 text-slate-400" />
+          <span className="text-xs text-slate-300 font-semibold">Nebelkrieg</span>
+          <span className="text-xs text-slate-500">Klicke Felder zum Hinzufügen/Entfernen</span>
+          <div className="ml-auto flex gap-2">
+            <button onClick={fillFog}
+              className="px-2.5 py-1 rounded bg-slate-700/60 border border-slate-600/60 text-xs text-slate-300 hover:bg-slate-700">
+              Alles vernebeln
+            </button>
+            <button onClick={clearFog}
+              className="px-2.5 py-1 rounded bg-zinc-700/60 border border-zinc-600/60 text-xs text-zinc-300 hover:bg-zinc-700">
+              Nebel entfernen
+            </button>
+            <button onClick={() => setFogMode(false)}
+              className="p-1 text-slate-500 hover:text-slate-300"><X className="w-4 h-4" /></button>
+          </div>
         </div>
       )}
 
@@ -1476,8 +1537,7 @@ export default function BattleMapPage() {
                 <p className="text-[10px] uppercase font-semibold text-zinc-600 mb-1">{catLabel[cat]}</p>
                 <div className="flex flex-wrap gap-1.5">
                   {effects.map(et => (
-                    <button key={et.id}
-                      onClick={() => setEffectMode(effectMode === et.id ? null : et.id)}
+                    <button key={et.id} onClick={() => setEffectMode(effectMode === et.id ? null : et.id)}
                       className={`flex items-center gap-1 px-2 py-1 rounded border text-[11px] transition-colors ${
                         effectMode === et.id ? 'border-purple-600/60 bg-purple-950/40 text-purple-200' : 'bg-zinc-800/60 border-zinc-700/60 text-zinc-400 hover:text-zinc-200'
                       }`}>
@@ -1490,9 +1550,7 @@ export default function BattleMapPage() {
           })}
           {effectMode && (
             <p className="mt-1 text-xs text-purple-400/80">
-              {EFFECT_TYPES.find(e => e.id === effectMode)?.simple
-                ? `Klicke auf ein Feld zum Platzieren`
-                : `Klicke auf den Mittelpunkt des Effekts`}
+              {EFFECT_TYPES.find(e => e.id === effectMode)?.simple ? 'Klicke auf ein Feld' : 'Klicke auf den Mittelpunkt'}
             </p>
           )}
           {(activeMap.map_effects?.length ?? 0) > 0 && (
@@ -1541,7 +1599,7 @@ export default function BattleMapPage() {
                 <div>
                   <label className="text-xs text-zinc-500 block mb-2">Richtung</label>
                   <div className="grid grid-cols-3 gap-1 w-24 mx-auto">
-                    {[[315,'↖'],[0,'↑'],[45,'↗'],[270,'←'],[null,''],[90,'→'],[225,'↙'],[180,'↓'],[135,'↘']].map(([deg, lbl], i) => (
+                    {[[315,'↖'],[0,'↑'],[45,'↗'],[270,'←'],[null,''],[90,'→'],[225,'↙'],[180,'↓'],[135,'↘']].map(([deg,lbl],i) => (
                       deg === null ? <div key={i} /> :
                       <button key={i} onClick={() => setPendingDirection(deg as number)}
                         className={`w-8 h-8 rounded text-sm font-bold transition-colors ${pendingDirection === deg ? 'bg-orange-800 text-white' : 'bg-zinc-800 text-zinc-400 hover:bg-zinc-700'}`}>
@@ -1600,18 +1658,17 @@ export default function BattleMapPage() {
         </div>
       )}
 
-      {/* ── Movement bars ── */}
+      {/* ── Movement Bar ── */}
       {moveMode && moveTarget && (
         <div className="flex-shrink-0 px-4 py-2 bg-emerald-950/40 border-b border-emerald-800/40 flex items-center gap-3">
           <span className="text-xs text-emerald-300">
-            Ziel: ({moveTarget.col},{moveTarget.row}) — Kosten: {reachableCells.get(`${moveTarget.col},${moveTarget.row}`) ?? 0} ft
+            Ziel: ({moveTarget.col},{moveTarget.row}) · Kosten: {reachableCells.get(`${moveTarget.col},${moveTarget.row}`) ?? 0} ft
           </span>
           <button onClick={confirmMove}
             className="flex items-center gap-1 px-3 py-1 rounded bg-emerald-800 hover:bg-emerald-700 text-xs font-bold text-white ml-auto">
             <Check className="w-3.5 h-3.5" /> Bestätigen
           </button>
-          <button onClick={cancelMove}
-            className="flex items-center gap-1 px-3 py-1 rounded bg-zinc-700 hover:bg-zinc-600 text-xs text-zinc-300">
+          <button onClick={cancelMove} className="flex items-center gap-1 px-3 py-1 rounded bg-zinc-700 hover:bg-zinc-600 text-xs text-zinc-300">
             <X className="w-3.5 h-3.5" /> Abbrechen
           </button>
         </div>
@@ -1648,9 +1705,7 @@ export default function BattleMapPage() {
             wis: String(editingToken.stats?.wis ?? 10), cha: String(editingToken.stats?.cha ?? 10),
             notes: editingToken.notes ?? '', token_size: editingToken.token_size ?? 'medium',
           }}
-          onSave={saveEditedToken}
-          onClose={() => setEditingToken(null)}
-        />
+          onSave={saveEditedToken} onClose={() => setEditingToken(null)} />
       )}
 
       {/* ── Main Content ── */}
@@ -1667,64 +1722,214 @@ export default function BattleMapPage() {
             )}
           </div>
         ) : activeTab === 'tracker' && isGM ? (
-          /* GM Initiative Tracker */
-          <div className="flex-1 overflow-y-auto p-4 space-y-1.5">
-            <div className="flex items-center justify-between mb-3">
-              <p className="text-sm font-semibold text-zinc-400">Initiative — {tokens.length} Token</p>
-              <button onClick={resetAllMovement}
-                className="flex items-center gap-1 px-2.5 py-1 rounded bg-zinc-800 border border-zinc-700 text-xs text-zinc-500 hover:text-zinc-300">
-                <RotateCcw className="w-3 h-3" /> Bewegung reset
-              </button>
-            </div>
-            {tokens.length === 0 && <p className="text-sm text-zinc-700 text-center py-8">Keine Token auf der Karte.</p>}
-            {[...tokens].sort((a, b) => (b.initiative ?? 0) - (a.initiative ?? 0)).map(t => {
-              const activeConds = CONDITIONS.filter(c => t.conditions.includes(c.id))
-              const remainFt = (t.speed ?? 0) - (t.movement_used ?? 0)
-              return (
-                <div key={t.id} onClick={() => setSelectedToken(t.id === selectedToken ? null : t.id)}
-                  className={`flex items-center gap-3 px-3 py-2.5 rounded-lg border cursor-pointer transition-colors ${
-                    selectedToken === t.id ? 'border-zinc-500 bg-zinc-800/60' :
-                    t.token_type === 'player' ? 'border-sky-900/50 bg-sky-950/20 hover:bg-sky-950/30' :
-                    t.token_type === 'monster' ? 'border-red-900/50 bg-red-950/20 hover:bg-red-950/30' :
-                    'border-zinc-700/60 bg-zinc-800/30 hover:bg-zinc-800/50'
-                  } ${t.is_hidden ? 'opacity-40' : ''}`}>
-                  {/* Initiative badge */}
-                  <div className="w-8 h-8 rounded flex items-center justify-center bg-zinc-800/80 border border-zinc-700/60 flex-shrink-0">
-                    <span className="text-xs font-bold text-amber-500">{modSign(t.initiative ?? 0)}</span>
-                  </div>
-                  <span className="text-xl flex-shrink-0">{t.icon}</span>
-                  <div className="flex-1 min-w-0">
-                    <div className="flex items-center gap-1.5 flex-wrap">
-                      <p className="text-sm font-semibold text-zinc-200 truncate">{t.name}</p>
-                      {t.is_hidden && <EyeOff className="w-3 h-3 text-zinc-600" />}
-                      {activeConds.map(c => <span key={c.id} className={`text-[10px] px-1 rounded ${c.bg} ${c.border} ${c.color}`}>{c.icon}</span>)}
-                    </div>
-                    <div className="flex gap-3 text-[11px] text-zinc-600 flex-wrap">
-                      {t.max_hp !== null && <span className={t.current_hp === 0 ? 'text-red-500' : ''}>{t.current_hp}/{t.max_hp} HP</span>}
-                      {t.armor_class !== null && <span>RK {t.armor_class}</span>}
-                      {t.speed !== null && <span className={remainFt === 0 ? 'text-red-600' : 'text-sky-600'}>{remainFt}/{t.speed} ft</span>}
-                    </div>
-                  </div>
-                  {t.max_hp !== null && (
-                    <div className="flex gap-1">
-                      <button onClick={e => { e.stopPropagation(); updateToken(t.id, { current_hp: Math.max(0, (t.current_hp ?? 0) - 1) }) }}
-                        className="w-6 h-6 rounded bg-red-950/50 border border-red-800/50 text-red-400 text-xs font-bold hover:bg-red-900/60">−</button>
-                      <button onClick={e => { e.stopPropagation(); updateToken(t.id, { current_hp: Math.min(t.max_hp!, (t.current_hp ?? 0) + 1) }) }}
-                        className="w-6 h-6 rounded bg-emerald-950/50 border border-emerald-800/50 text-emerald-400 text-xs font-bold hover:bg-emerald-900/60">+</button>
-                    </div>
-                  )}
-                  <button onClick={e => { e.stopPropagation(); setEditingToken(t) }} className="p-1 text-zinc-700 hover:text-zinc-400">
-                    <Edit2 className="w-3.5 h-3.5" />
-                  </button>
-                  <button onClick={e => { e.stopPropagation(); deleteToken(t.id) }} className="p-1 text-zinc-700 hover:text-red-600">
-                    <Trash2 className="w-3.5 h-3.5" />
-                  </button>
+          /* ── Initiative Tracker Tab ── */
+          <div className="flex-1 overflow-y-auto p-4 space-y-3">
+
+            {/* ── Timer & Controls ── */}
+            <div className="bg-zinc-900 border border-zinc-800 rounded-xl p-4 space-y-3">
+              {/* Round + Active Token */}
+              <div className="flex items-center justify-between">
+                <div>
+                  <p className="text-xs text-zinc-500 uppercase font-semibold">Runde</p>
+                  <p className="text-3xl font-black text-amber-400 leading-none">{initiativeData.round}</p>
                 </div>
-              )
-            })}
+                {activeTurnToken && (
+                  <div className="flex items-center gap-2 px-3 py-2 rounded-lg bg-amber-900/20 border border-amber-700/40">
+                    <span className="text-lg">{activeTurnToken.icon}</span>
+                    <div>
+                      <p className="text-xs text-amber-400 font-semibold">Am Zug</p>
+                      <p className="text-sm font-bold text-zinc-100">{activeTurnToken.name}</p>
+                    </div>
+                  </div>
+                )}
+                {sortedInitiative.length === 0 && (
+                  <p className="text-xs text-zinc-600">Keine Token – füge Figuren zur Karte hinzu</p>
+                )}
+              </div>
+
+              {/* Timer */}
+              <div className="space-y-1.5">
+                <div className="flex items-center justify-between">
+                  <div className="flex items-center gap-2">
+                    <Timer className="w-3.5 h-3.5 text-zinc-500" />
+                    <span className="text-xs text-zinc-400">Zugtimer</span>
+                  </div>
+                  <span className="text-xl font-black tabular-nums" style={{ color: timerColor }}>
+                    {timerMin}:{timerSec}
+                  </span>
+                </div>
+                <div className="h-1.5 rounded-full bg-zinc-800">
+                  <div className="h-full rounded-full transition-all duration-1000"
+                    style={{ width: `${timerPct * 100}%`, backgroundColor: timerColor }} />
+                </div>
+                <div className="flex gap-2">
+                  <button onClick={toggleTimer}
+                    className={`flex-1 flex items-center justify-center gap-1.5 py-1.5 rounded-lg border text-xs font-semibold transition-colors ${
+                      timerRunning
+                        ? 'bg-amber-900/30 border-amber-700/50 text-amber-300 hover:bg-amber-900/50'
+                        : 'bg-zinc-800 border-zinc-700 text-zinc-400 hover:text-zinc-200'
+                    }`}>
+                    {timerRunning ? <><Pause className="w-3.5 h-3.5" /> Pause</> : <><Play className="w-3.5 h-3.5" /> Start</>}
+                  </button>
+                  <button onClick={() => setTimerRemaining(initiativeData.timer_seconds)}
+                    className="px-3 py-1.5 rounded-lg border border-zinc-700 bg-zinc-800 text-xs text-zinc-500 hover:text-zinc-300">
+                    <RotateCcw className="w-3 h-3" />
+                  </button>
+                  <div className="flex items-center gap-1">
+                    <span className="text-xs text-zinc-600">Limit:</span>
+                    <select className="bg-zinc-800 border border-zinc-700 rounded px-1.5 py-1 text-xs text-zinc-300 focus:outline-none"
+                      value={initiativeData.timer_seconds}
+                      onChange={e => updateMap({ initiative_data: { ...initiativeData, timer_seconds: parseInt(e.target.value) } })}>
+                      {[30,60,90,120,180,300].map(s => <option key={s} value={s}>{s}s</option>)}
+                    </select>
+                  </div>
+                </div>
+              </div>
+
+              {/* Navigation buttons */}
+              <div className="flex gap-2">
+                <button onClick={prevTurnFn}
+                  className="flex items-center gap-1 px-3 py-2 rounded-lg bg-zinc-800 border border-zinc-700 text-xs text-zinc-400 hover:text-zinc-200">
+                  <SkipBack className="w-3.5 h-3.5" /> Zurück
+                </button>
+                <button onClick={advanceTurn}
+                  className="flex-1 flex items-center justify-center gap-1.5 py-2 rounded-lg bg-amber-800 hover:bg-amber-700 border border-amber-600/60 text-xs font-bold text-amber-100">
+                  <SkipForward className="w-3.5 h-3.5" /> Nächster Zug
+                </button>
+                <button onClick={resetInitiative}
+                  className="flex items-center gap-1 px-3 py-2 rounded-lg bg-zinc-800 border border-zinc-700 text-xs text-zinc-400 hover:text-zinc-200" title="Kampf zurücksetzen">
+                  <RotateCcw className="w-3.5 h-3.5" />
+                </button>
+              </div>
+            </div>
+
+            {/* ── Party HP Overview ── */}
+            {playerTokens.length > 0 && (
+              <div className="bg-zinc-900 border border-zinc-800 rounded-xl p-3">
+                <p className="text-[10px] uppercase font-semibold text-zinc-600 mb-2 flex items-center gap-1">
+                  <Heart className="w-3 h-3 text-red-700" /> Gruppen-HP
+                </p>
+                <div className="space-y-1.5">
+                  {playerTokens.map(t => {
+                    const pct = t.max_hp ? Math.max(0, Math.min(1, (t.current_hp ?? 0) / t.max_hp)) : null
+                    const color = pct === null ? '#52525b' : pct > 0.6 ? '#4ade80' : pct > 0.3 ? '#facc15' : '#f87171'
+                    return (
+                      <div key={t.id}>
+                        <div className="flex items-center justify-between text-xs mb-0.5">
+                          <span className="text-zinc-300 flex items-center gap-1">
+                            <span>{t.icon}</span> {t.name}
+                          </span>
+                          <span className="font-bold tabular-nums" style={{ color }}>
+                            {t.current_hp ?? '?'} / {t.max_hp ?? '?'}
+                          </span>
+                        </div>
+                        {pct !== null && (
+                          <div className="h-1 rounded-full bg-zinc-800">
+                            <div className="h-full rounded-full transition-all" style={{ width: `${pct * 100}%`, backgroundColor: color }} />
+                          </div>
+                        )}
+                      </div>
+                    )
+                  })}
+                </div>
+              </div>
+            )}
+
+            {/* ── Initiative Order ── */}
+            <div className="space-y-1">
+              <div className="flex items-center justify-between mb-1">
+                <p className="text-xs font-semibold text-zinc-500">{tokens.length} Figuren · nach Initiative sortiert</p>
+                <button onClick={resetAllMovement}
+                  className="flex items-center gap-1 px-2 py-1 rounded bg-zinc-800 border border-zinc-700 text-xs text-zinc-500 hover:text-zinc-300">
+                  <RotateCcw className="w-3 h-3" /> Bewegung reset
+                </button>
+              </div>
+              {tokens.length === 0 && <p className="text-sm text-zinc-700 text-center py-8">Keine Token auf der Karte.</p>}
+              {sortedInitiative.map((t, idx) => {
+                const activeConds = CONDITIONS.filter(c => t.conditions.includes(c.id))
+                const remainFt = (t.speed ?? 0) - (t.movement_used ?? 0)
+                const isActive = activeTurnToken?.id === t.id
+                const initIdx = initiativeData.current_turn % sortedInitiative.length
+                return (
+                  <div key={t.id} onClick={() => setSelectedToken(t.id === selectedToken ? null : t.id)}
+                    className={`flex items-center gap-3 px-3 py-2.5 rounded-lg border cursor-pointer transition-all ${
+                      isActive
+                        ? 'border-amber-600/70 bg-amber-950/30 shadow-lg shadow-amber-900/20 scale-[1.01]'
+                        : selectedToken === t.id ? 'border-zinc-500 bg-zinc-800/60'
+                        : t.token_type === 'player' ? 'border-sky-900/50 bg-sky-950/20 hover:bg-sky-950/30'
+                        : t.token_type === 'monster' ? 'border-red-900/50 bg-red-950/20 hover:bg-red-950/30'
+                        : 'border-zinc-700/60 bg-zinc-800/30 hover:bg-zinc-800/50'
+                    } ${t.is_hidden ? 'opacity-40' : ''}`}>
+                    {/* Position badge */}
+                    <div className={`w-6 h-6 rounded flex items-center justify-center flex-shrink-0 text-[10px] font-bold ${isActive ? 'bg-amber-700 text-amber-100' : 'bg-zinc-800 text-zinc-500'}`}>
+                      {idx + 1}
+                    </div>
+                    <div className="w-7 h-7 rounded flex items-center justify-center bg-zinc-800/80 border border-zinc-700/60 flex-shrink-0">
+                      <span className="text-xs font-bold text-amber-500">{modSign(t.initiative ?? 0)}</span>
+                    </div>
+                    <span className="text-xl flex-shrink-0">{t.icon}</span>
+                    <div className="flex-1 min-w-0">
+                      <div className="flex items-center gap-1.5 flex-wrap">
+                        <p className="text-sm font-semibold text-zinc-200 truncate">{t.name}</p>
+                        {isActive && <span className="text-[9px] uppercase font-bold text-amber-400 bg-amber-900/30 px-1.5 py-0.5 rounded">Am Zug</span>}
+                        {t.is_hidden && <EyeOff className="w-3 h-3 text-zinc-600" />}
+                        {activeConds.map(c => <span key={c.id} className={`text-[10px] px-1 rounded ${c.bg} ${c.border} ${c.color}`}>{c.icon}</span>)}
+                      </div>
+                      <div className="flex gap-3 text-[11px] text-zinc-600 flex-wrap">
+                        {t.max_hp !== null && <span className={t.current_hp === 0 ? 'text-red-500' : ''}>{t.current_hp}/{t.max_hp} HP</span>}
+                        {t.armor_class !== null && <span>RK {t.armor_class}</span>}
+                        {t.speed !== null && <span className={remainFt <= 0 ? 'text-red-600' : 'text-sky-600'}>{remainFt}/{t.speed} ft</span>}
+                      </div>
+                    </div>
+                    {t.max_hp !== null && (
+                      <div className="flex gap-1">
+                        <button onClick={e => { e.stopPropagation(); updateToken(t.id, { current_hp: Math.max(0, (t.current_hp ?? 0) - 1) }) }}
+                          className="w-6 h-6 rounded bg-red-950/50 border border-red-800/50 text-red-400 text-xs font-bold hover:bg-red-900/60">−</button>
+                        <button onClick={e => { e.stopPropagation(); updateToken(t.id, { current_hp: Math.min(t.max_hp!, (t.current_hp ?? 0) + 1) }) }}
+                          className="w-6 h-6 rounded bg-emerald-950/50 border border-emerald-800/50 text-emerald-400 text-xs font-bold hover:bg-emerald-900/60">+</button>
+                      </div>
+                    )}
+                    <button onClick={e => { e.stopPropagation(); setEditingToken(t) }} className="p-1 text-zinc-700 hover:text-zinc-400">
+                      <Edit2 className="w-3.5 h-3.5" />
+                    </button>
+                    <button onClick={e => { e.stopPropagation(); deleteToken(t.id) }} className="p-1 text-zinc-700 hover:text-red-600">
+                      <Trash2 className="w-3.5 h-3.5" />
+                    </button>
+                  </div>
+                )
+              })}
+            </div>
+
+            {/* ── Concentration Tracker ── */}
+            <div className="bg-zinc-900 border border-zinc-800 rounded-xl p-3">
+              <p className="text-[10px] uppercase font-semibold text-zinc-600 mb-2 flex items-center gap-1">
+                🎯 Konzentrations-Tracker
+              </p>
+              {concentratingTokens.length === 0 ? (
+                <p className="text-xs text-zinc-700 italic">Keine aktiven Konzentrationszauber</p>
+              ) : (
+                <div className="space-y-1.5">
+                  {concentratingTokens.map(t => (
+                    <div key={t.id} className="flex items-center gap-2 px-2.5 py-2 rounded-lg bg-indigo-950/40 border border-indigo-800/40">
+                      <span className="text-base">{t.icon}</span>
+                      <div className="flex-1 min-w-0">
+                        <p className="text-xs font-semibold text-indigo-200 truncate">{t.name}</p>
+                        <p className="text-[10px] text-indigo-600">Konzentration aktiv</p>
+                      </div>
+                      <button
+                        onClick={() => updateToken(t.id, { conditions: t.conditions.filter(c => c !== 'Konzentration') })}
+                        className="text-xs text-indigo-500 hover:text-red-400 px-2 py-0.5 rounded border border-indigo-800/40 hover:border-red-800/40 transition-colors">
+                        Unterbrechen
+                      </button>
+                    </div>
+                  ))}
+                </div>
+              )}
+            </div>
+
           </div>
         ) : (
-          /* Map View */
+          /* ── Map View ── */
           <div className="flex-1 overflow-hidden flex">
             <div className="flex-1 overflow-auto relative bg-zinc-950">
               <div
@@ -1736,9 +1941,8 @@ export default function BattleMapPage() {
                   backgroundImage: activeMap.image_url
                     ? `url(${activeMap.image_url})`
                     : 'linear-gradient(160deg, #0c0008 0%, #050010 40%, #0a0005 70%, #000000 100%)',
-                  backgroundSize: 'cover',
-                  backgroundPosition: 'center',
-                  cursor: terrainMode ? 'crosshair' : effectMode ? 'cell' : moveMode ? 'pointer' : dragRender ? 'grabbing' : 'default',
+                  backgroundSize: 'cover', backgroundPosition: 'center',
+                  cursor: fogMode ? 'crosshair' : terrainMode ? 'crosshair' : effectMode ? 'cell' : moveMode ? 'pointer' : dragRender ? 'grabbing' : 'default',
                 }}
                 onClick={handleGridClick}
                 onMouseMove={handleGridMouseMove}
@@ -1750,12 +1954,12 @@ export default function BattleMapPage() {
                   {Array.from({ length: activeMap.grid_cols + 1 }, (_, i) => (
                     <line key={`v${i}`}
                       x1={i * cs + ox} y1={oy} x2={i * cs + ox} y2={activeMap.grid_rows * cs + oy}
-                      stroke={`rgba(200,180,150,${activeMap.grid_opacity ?? 0.15})`} strokeWidth="0.5" />
+                      stroke={hexToRgba(activeMap.grid_color ?? '#C8B496', activeMap.grid_opacity ?? 0.15)} strokeWidth="0.5" />
                   ))}
                   {Array.from({ length: activeMap.grid_rows + 1 }, (_, i) => (
                     <line key={`h${i}`}
                       x1={ox} y1={i * cs + oy} x2={activeMap.grid_cols * cs + ox} y2={i * cs + oy}
-                      stroke={`rgba(200,180,150,${activeMap.grid_opacity ?? 0.15})`} strokeWidth="0.5" />
+                      stroke={hexToRgba(activeMap.grid_color ?? '#C8B496', activeMap.grid_opacity ?? 0.15)} strokeWidth="0.5" />
                   ))}
 
                   {/* Difficult Terrain */}
@@ -1765,8 +1969,17 @@ export default function BattleMapPage() {
                       fill="rgba(255,100,0,0.14)" stroke="rgba(255,100,0,0.35)" strokeWidth="1" strokeDasharray="4 2" />
                   })}
 
+                  {/* AOE Effects */}
+                  {(activeMap.map_effects ?? []).map(eff => {
+                    if (eff.type === 'circle') return renderAoeCircle(eff)
+                    if (eff.type === 'cone') return renderAoeCone(eff)
+                    if (eff.type === 'line') return renderAoeLine(eff)
+                    if (eff.type === 'aura') return renderAoeAura(eff)
+                    return null
+                  })}
+
                   {/* Reachable cells */}
-                  {moveMode && Array.from(reachableCells.entries()).map(([key, _cost]) => {
+                  {moveMode && Array.from(reachableCells.entries()).map(([key]) => {
                     const [col, row] = key.split(',').map(Number)
                     const p = cellPx(col, row)
                     const isTarget = moveTarget?.col === col && moveTarget?.row === row
@@ -1784,7 +1997,7 @@ export default function BattleMapPage() {
                       fill="none" stroke="rgba(52,211,153,0.7)" strokeWidth="3" strokeDasharray="6 3" strokeLinecap="round" />
                   )}
 
-                  {/* Drag snap preview highlight */}
+                  {/* Drag snap preview */}
                   {dragRender?.hoverCell && (() => {
                     const p = cellPx(dragRender.hoverCell.col, dragRender.hoverCell.row)
                     const dtoken = tokens.find(t => t.id === dragRender.tokenId)
@@ -1795,14 +2008,26 @@ export default function BattleMapPage() {
                       strokeWidth="2" strokeDasharray="6 3" rx="4" />
                   })()}
 
-                  {/* AOE Effects */}
-                  {(activeMap.map_effects ?? []).map(eff => {
-                    if (eff.type === 'circle') return renderAoeCircle(eff)
-                    if (eff.type === 'cone') return renderAoeCone(eff)
-                    if (eff.type === 'line') return renderAoeLine(eff)
-                    if (eff.type === 'aura') return renderAoeAura(eff)
-                    return null
+                  {/* Fog of War — render above everything else */}
+                  {(activeMap.fog_cells ?? []).map(fc => {
+                    const p = cellPx(fc.col, fc.row)
+                    return (
+                      <rect key={`fog-${fc.col}-${fc.row}`}
+                        x={p.x} y={p.y} width={cs} height={cs}
+                        fill={isGM ? 'rgba(5,0,20,0.72)' : 'rgba(0,0,0,0.97)'}
+                        stroke={isGM ? 'rgba(80,60,120,0.35)' : 'none'}
+                        strokeWidth={isGM ? 0.5 : 0}
+                      />
+                    )
                   })}
+
+                  {/* Fog mode hover indicator */}
+                  {fogMode && hoverCoord && (
+                    <rect x={hoverCoord.col * cs + ox} y={hoverCoord.row * cs + oy}
+                      width={cs} height={cs}
+                      fill={fogSet.has(`${hoverCoord.col},${hoverCoord.row}`) ? 'rgba(200,200,255,0.15)' : 'rgba(80,60,120,0.30)'}
+                      stroke="rgba(150,120,220,0.8)" strokeWidth="1.5" strokeDasharray="4 2" />
+                  )}
                 </svg>
 
                 {/* Simple Effect Icons */}
@@ -1828,37 +2053,31 @@ export default function BattleMapPage() {
                   const spanPx = span >= 1 ? Math.round(span) * cs : Math.round(cs * span)
                   const isDragged = dragRender?.tokenId === t.id && dragRender.hoverCell !== null
                   const canDrag = isGM || t.player_user_id === user?.id
+                  const isActiveTurn = activeTurnToken?.id === t.id
                   return (
-                    <div
-                      key={t.id}
+                    <div key={t.id}
                       style={{
                         position: 'absolute',
-                        left: t.col * cs + ox + (span < 1 ? 2 : 2),
-                        top: t.row * cs + oy + (span < 1 ? 2 : 2),
+                        left: t.col * cs + ox + 2, top: t.row * cs + oy + 2,
                         width: spanPx - 4, height: spanPx - 4,
                         cursor: canDrag ? (isDragged ? 'grabbing' : 'grab') : 'pointer',
                         userSelect: 'none',
-                        zIndex: selectedToken === t.id ? 10 : 5,
+                        zIndex: selectedToken === t.id ? 10 : isActiveTurn ? 8 : 5,
                       }}
                       onMouseDown={e => handleTokenMouseDown(e, t)}
                       onClick={e => {
                         e.stopPropagation()
-                        if (terrainMode || effectMode || moveMode) return
+                        if (terrainMode || effectMode || moveMode || fogMode) return
                         if (dragStateRef.current?.dragging) return
                       }}
                     >
-                      <TokenPiece
-                        token={t}
-                        selected={selectedToken === t.id}
-                        cellSize={cs}
-                        isMoving={movingTokenId === t.id}
-                        isDragged={isDragged}
-                      />
+                      <TokenPiece token={t} selected={selectedToken === t.id} cellSize={cs}
+                        isMoving={movingTokenId === t.id} isDragged={isDragged} isActiveTurn={isActiveTurn} />
                     </div>
                   )
                 })}
 
-                {/* Drag snap ghost — show at hover cell position */}
+                {/* Drag ghost */}
                 {dragRender?.hoverCell && (() => {
                   const dtoken = tokens.find(t => t.id === dragRender.tokenId)
                   if (!dtoken) return null
@@ -1891,8 +2110,7 @@ export default function BattleMapPage() {
                         canvasH: activeMap.grid_rows * activeMap.cell_size,
                       })
                     }}
-                    title="Ziehen: Gitter-Raster anpassen (Bild bleibt fixiert)"
-                  >
+                    title="Ziehen: Gitter-Raster anpassen (Bild bleibt fixiert)">
                     <svg width="12" height="12" viewBox="0 0 12 12" fill="none">
                       <path d="M2 10L10 2M6 10L10 6M10 10V10" stroke="black" strokeWidth="1.5" strokeLinecap="round" />
                     </svg>
@@ -1907,17 +2125,23 @@ export default function BattleMapPage() {
                 )}
 
                 {/* Status hints */}
-                {terrainMode && (
-                  <div className="absolute bottom-3 left-1/2 -translate-x-1/2 bg-zinc-900/90 text-orange-300 text-xs px-3 py-1.5 rounded-full pointer-events-none border border-orange-800/60">
-                    Geländemodus — Klicke Felder zum Markieren/Entfernen (schwieriges Gelände)
+                {fogMode && (
+                  <div className="absolute bottom-3 left-1/2 -translate-x-1/2 bg-slate-900/90 text-slate-200 text-xs px-3 py-1.5 rounded-full pointer-events-none border border-slate-700/60">
+                    <Cloud className="w-3.5 h-3.5 inline mr-1.5" />
+                    Nebelkrieg-Modus — Klicke Felder um Nebel hinzuzufügen/entfernen
                   </div>
                 )}
-                {effectMode && !terrainMode && (
+                {terrainMode && !fogMode && (
+                  <div className="absolute bottom-3 left-1/2 -translate-x-1/2 bg-zinc-900/90 text-orange-300 text-xs px-3 py-1.5 rounded-full pointer-events-none border border-orange-800/60">
+                    Geländemodus — Klicke Felder zum Markieren (schwieriges Gelände)
+                  </div>
+                )}
+                {effectMode && !terrainMode && !fogMode && (
                   <div className="absolute bottom-3 left-1/2 -translate-x-1/2 bg-zinc-900/90 text-purple-300 text-xs px-3 py-1.5 rounded-full pointer-events-none border border-purple-800/60">
                     {EFFECT_TYPES.find(e => e.id === effectMode)?.icon} Effektmodus — Klicke auf ein Feld
                   </div>
                 )}
-                {!moveMode && !terrainMode && !effectMode && (
+                {!moveMode && !terrainMode && !effectMode && !fogMode && (
                   <div className="absolute bottom-3 right-3 text-zinc-700 text-[10px] pointer-events-none">
                     Ziehen oder Pfeiltasten zum Bewegen
                   </div>
