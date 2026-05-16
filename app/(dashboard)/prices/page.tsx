@@ -1,7 +1,7 @@
 'use client'
 
 import { useState, useEffect, useMemo } from 'react'
-import { Tag, Plus, Search, Check, X, Trash2, ChevronDown, ChevronUp, Pencil } from 'lucide-react'
+import { Tag, Plus, Search, X, Trash2, Pencil } from 'lucide-react'
 import { createClient } from '@/lib/supabase/client'
 import { useAuth } from '@/lib/hooks/useAuth'
 
@@ -282,11 +282,11 @@ export default function PricesPage() {
   const isGM = user?.role === 'gm'
 
   const loadItems = async () => {
-    const q = supabase
+    const { data } = await supabase
       .from('item_prices')
       .select('*, user:profiles(username,role)')
+      .eq('approved', true)
       .order('name')
-    const { data } = isGM ? await q : await q.eq('approved', true)
     if (data) setItems(data as ItemPrice[])
   }
 
@@ -312,27 +312,42 @@ export default function PricesPage() {
 
   const handleSubmit = async () => {
     if (!user || !form.name.trim() || !form.price_gp) return
-    const payload = {
-      name: form.name.trim(),
-      rarity: form.rarity,
-      price_gp: parseFloat(form.price_gp),
-      note: form.note.trim() || null,
-      approved: isGM,
-      created_by: user.id,
-    }
     if (editId) {
-      await supabase.from('item_prices').update(payload).eq('id', editId)
+      // GM editing existing item
+      await supabase.from('item_prices').update({
+        name: form.name.trim(),
+        rarity: form.rarity,
+        price_gp: parseFloat(form.price_gp),
+        note: form.note.trim() || null,
+      }).eq('id', editId)
       setEditId(null)
+    } else if (isGM) {
+      // GM adds directly as approved
+      await supabase.from('item_prices').insert({
+        name: form.name.trim(),
+        rarity: form.rarity,
+        price_gp: parseFloat(form.price_gp),
+        note: form.note.trim() || null,
+        approved: true,
+        created_by: user.id,
+      })
     } else {
-      await supabase.from('item_prices').insert(payload)
+      // Player submits via approval_requests
+      await supabase.from('approval_requests').insert({
+        requester_id: user.id,
+        request_type: 'item_price',
+        title: `Itempreis: ${form.name.trim()}`,
+        content: form.note.trim() || null,
+        item_data: {
+          name: form.name.trim(),
+          rarity: form.rarity,
+          price_gp: parseFloat(form.price_gp),
+          note: form.note.trim() || null,
+        },
+      })
     }
     setForm({ name: '', rarity: 'uncommon', price_gp: '', note: '' })
     setShowAdd(false)
-    loadItems()
-  }
-
-  const handleApprove = async (id: string) => {
-    await supabase.from('item_prices').update({ approved: true }).eq('id', id)
     loadItems()
   }
 
@@ -356,8 +371,6 @@ export default function PricesPage() {
     else list.sort((a, b) => a.name.localeCompare(b.name, 'de'))
     return list
   }, [items, rarityFilter, search, sortBy])
-
-  const pending = items.filter((i) => !i.approved)
 
   return (
     <div className="flex flex-col h-[calc(100vh-4rem)] md:h-screen overflow-hidden">
@@ -388,27 +401,6 @@ export default function PricesPage() {
         </div>
       </div>
 
-      {/* GM: pending approvals */}
-      {isGM && pending.length > 0 && (
-        <div className="flex-shrink-0 px-4 py-2 bg-amber-950/30 border-b border-amber-800/40">
-          <p className="text-xs font-semibold text-amber-400 mb-1.5">⏳ {pending.length} ausstehende Genehmigung{pending.length > 1 ? 'en' : ''}</p>
-          <div className="space-y-1">
-            {pending.map((item) => (
-              <div key={item.id} className="flex items-center gap-2 text-sm">
-                <span className="text-zinc-300 flex-1 min-w-0 truncate">{item.name}</span>
-                <span className="text-zinc-500 text-xs">{fmtGp(item.price_gp)}</span>
-                <span className="text-zinc-600 text-xs">von {item.user?.username}</span>
-                <button onClick={() => handleApprove(item.id)} className="p-1 text-green-400 hover:text-green-300">
-                  <Check className="w-4 h-4" />
-                </button>
-                <button onClick={() => handleDelete(item.id)} className="p-1 text-red-400 hover:text-red-300">
-                  <X className="w-4 h-4" />
-                </button>
-              </div>
-            ))}
-          </div>
-        </div>
-      )}
 
       {/* Add/Edit form */}
       {showAdd && (
