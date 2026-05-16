@@ -16,6 +16,8 @@ import {
   Settings,
   Image as ImageIcon,
   BookText,
+  MessageSquare,
+  Tag,
 } from 'lucide-react'
 import { cn } from '@/lib/utils'
 import { useAuth } from '@/lib/hooks/useAuth'
@@ -32,6 +34,8 @@ const navItems = [
   { href: '/notes', label: 'Notizen', icon: ScrollText },
   { href: '/characters', label: 'Charaktere', icon: Sword },
   { href: '/rules', label: 'Grundregeln', icon: BookOpen },
+  { href: '/chat', label: 'Chat', icon: MessageSquare },
+  { href: '/prices', label: 'Item Preise', icon: Tag },
 ]
 
 export function Sidebar() {

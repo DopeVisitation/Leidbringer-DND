@@ -104,14 +104,10 @@ export async function GET(request: Request) {
     }
 
     // ── HP ────────────────────────────────────────────────────────────────
+    // Use baseHitPoints stored by DnD Beyond (no re-calculation = no off-by-one errors)
     const overrideHp: number | null = char.overrideHitPoints ?? null
-    let baseHp = 0
-    for (const cls of (char.classes ?? [])) {
-      const hitDice: number = cls.definition?.hitDice ?? 8
-      baseHp += hitDice + (cls.level - 1) * Math.ceil(hitDice / 2 + 0.5)
-    }
     const conMod = modAt(baseStats['CON'] ?? 10)
-    const maxHp = overrideHp ?? (baseHp + totalLevel * conMod + (char.bonusHitPoints ?? 0))
+    const maxHp = overrideHp ?? ((char.baseHitPoints ?? 0) + totalLevel * conMod + (char.bonusHitPoints ?? 0))
     const removedHp: number = char.removedHitPoints ?? 0
     const currentHp = maxHp - removedHp
 
@@ -150,9 +146,17 @@ export async function GET(request: Request) {
       WIS: 'wisdom-saving-throws', CHA: 'charisma-saving-throws',
     }
     const saves = ['STR', 'DEX', 'CON', 'INT', 'WIS', 'CHA'].map((ab) => {
-      const isProf = mods.some((m) => m.type === 'proficiency' && m.subType === SAVE_KEYS[ab])
+      const saveKey = SAVE_KEYS[ab]
+      const isProf = mods.some((m) => m.type === 'proficiency' && m.subType === saveKey)
       const abilityMod = modAt(baseStats[ab] ?? 10)
-      return { ability: ab, proficient: isProf, bonus: abilityMod + (isProf ? profBonus : 0) }
+      let bonus = abilityMod + (isProf ? profBonus : 0)
+      // Bonus modifiers from items/feats (e.g. Cloak of Protection = +1 to all saves)
+      for (const m of mods) {
+        if (m.type === 'bonus' && typeof m.value === 'number') {
+          if (m.subType === saveKey || m.subType === 'saving-throws') bonus += m.value
+        }
+      }
+      return { ability: ab, proficient: isProf, bonus }
     })
 
     // ── Passive stats ─────────────────────────────────────────────────────
@@ -317,9 +321,18 @@ export async function GET(request: Request) {
       ac = baseAC
     }
 
+    // ── Spellcasting ability & derived stats ──────────────────────────────
+    const SC_ABILITY_BY_ID: Record<number, string> = { 1:'STR', 2:'DEX', 3:'CON', 4:'INT', 5:'WIS', 6:'CHA' }
+    const primaryClass = (char.classes ?? [])[0]
+    const spellcastingAbility = SC_ABILITY_BY_ID[primaryClass?.spellCastingAbilityId ?? 4] ?? 'INT'
+    const spellcastingMod = modAt(baseStats[spellcastingAbility] ?? 10)
+    const spellAttackBonus = spellcastingMod + profBonus
+    const spellSaveDC = 8 + spellcastingMod + profBonus
+
     // ── Spells ────────────────────────────────────────────────────────────
     interface SpellSlotItem {
       alwaysPrepared?: boolean
+      prepared?: boolean
       definition?: {
         name?: string; level?: number; school?: string
         attackType?: number; saveStatId?: number; range?: { origin?: string; rangeValue?: number }
@@ -337,6 +350,7 @@ export async function GET(request: Request) {
         school: s.definition?.school ?? '',
         attackType: s.definition?.attackType ?? null,
         alwaysPrepared: s.alwaysPrepared ?? false,
+        prepared: s.prepared ?? false,
       }))
       .filter((s) => s.name)
 
@@ -441,6 +455,9 @@ export async function GET(request: Request) {
       languages,
       spells,
       spell_slots: rawSlots,
+      spellcasting_ability: spellcastingAbility,
+      spell_attack_bonus: spellAttackBonus,
+      spell_save_dc: spellSaveDC,
       features,
       inventory_items: inventoryItems,
       currencies,

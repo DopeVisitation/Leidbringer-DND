@@ -1,12 +1,21 @@
 'use client'
 
 import { useState, useEffect, useRef, useCallback } from 'react'
-import { Dices, Plus, Minus, Trash2, RotateCw, Sword, Shield, Sparkles, Star, Zap, ChevronDown, ChevronRight } from 'lucide-react'
+import { Dices, Plus, Minus, Trash2, RotateCw, Sword, Shield, Sparkles, Star, Zap, ChevronDown, ChevronRight, Bookmark, BookmarkCheck, X } from 'lucide-react'
 import { createClient } from '@/lib/supabase/client'
 import { useAuth } from '@/lib/hooks/useAuth'
 import type { DiceRoll, DiceConfig, CharacterLink, CharacterFullData } from '@/types'
 
 const DICE_TYPES = ['d4', 'd6', 'd8', 'd10', 'd12', 'd20', 'd100']
+
+interface DiceFavorite {
+  id: string
+  name: string
+  attack_bonus: number
+  damage_dice: string
+  damage_bonus: number
+  damage_type: string | null
+}
 
 const DICE_COLORS: Record<string, string> = {
   d4:   'text-green-400',
@@ -112,6 +121,9 @@ export default function DicePage() {
   const [lastResult, setLastResult] = useState<{ config: DiceConfig[]; results: number[][]; total: number; modifier: number; sumDice: boolean } | null>(null)
   const [character, setCharacter] = useState<CharacterLink | null>(null)
   const [openSections, setOpenSections] = useState({ checks: true, saves: true, skills: false, attacks: true })
+  const [favorites, setFavorites] = useState<DiceFavorite[]>([])
+  const [showFavForm, setShowFavForm] = useState(false)
+  const [favForm, setFavForm] = useState({ name: '', attack_bonus: '0', damage_dice: '1d6', damage_bonus: '0', damage_type: '' })
   const logRef = useRef<HTMLDivElement>(null)
 
   useEffect(() => {
@@ -132,7 +144,39 @@ export default function DicePage() {
       .eq('user_id', user.id)
       .maybeSingle()
       .then(({ data }) => { if (data) setCharacter(data as CharacterLink) })
+    loadFavorites()
+  // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [user, supabase])
+
+  const loadFavorites = async () => {
+    if (!user) return
+    const { data } = await supabase
+      .from('dice_favorites')
+      .select('*')
+      .eq('user_id', user.id)
+      .order('created_at')
+    if (data) setFavorites(data as DiceFavorite[])
+  }
+
+  const saveFavorite = async () => {
+    if (!user || !favForm.name.trim() || !favForm.damage_dice.trim()) return
+    await supabase.from('dice_favorites').insert({
+      user_id: user.id,
+      name: favForm.name.trim(),
+      attack_bonus: parseInt(favForm.attack_bonus) || 0,
+      damage_dice: favForm.damage_dice.trim(),
+      damage_bonus: parseInt(favForm.damage_bonus) || 0,
+      damage_type: favForm.damage_type || null,
+    })
+    setFavForm({ name: '', attack_bonus: '0', damage_dice: '1d6', damage_bonus: '0', damage_type: '' })
+    setShowFavForm(false)
+    loadFavorites()
+  }
+
+  const deleteFavorite = async (id: string) => {
+    await supabase.from('dice_favorites').delete().eq('id', id)
+    loadFavorites()
+  }
 
   const loadRolls = async () => {
     const { data } = await supabase
@@ -389,6 +433,107 @@ export default function DicePage() {
           )}
         </div>
       )}
+
+      {/* ── Favoriten ─────────────────────────────────────────────────────── */}
+      <div className="bg-zinc-900 border border-zinc-800 rounded-xl p-4 space-y-3">
+        <div className="flex items-center justify-between">
+          <div className="flex items-center gap-2">
+            <Bookmark className="w-4 h-4 text-amber-400" />
+            <p className="text-sm font-semibold text-zinc-200">Favoriten</p>
+            {favorites.length > 0 && <span className="text-xs text-zinc-600">({favorites.length})</span>}
+          </div>
+          <button
+            onClick={() => setShowFavForm(!showFavForm)}
+            className="flex items-center gap-1 text-xs px-2.5 py-1 rounded-lg bg-zinc-800 border border-zinc-700 text-zinc-400 hover:text-zinc-200 transition-colors"
+          >
+            <Plus className="w-3 h-3" /> Neu
+          </button>
+        </div>
+
+        {showFavForm && (
+          <div className="bg-zinc-800/60 rounded-lg p-3 space-y-2 border border-zinc-700">
+            <input
+              className="w-full bg-zinc-800 border border-zinc-700 rounded-lg px-3 py-1.5 text-sm text-zinc-100 placeholder-zinc-500 focus:outline-none focus:border-amber-500"
+              placeholder="Name (z.B. Schwertangriff)"
+              value={favForm.name}
+              onChange={(e) => setFavForm((f) => ({ ...f, name: e.target.value }))}
+            />
+            <div className="grid grid-cols-4 gap-2">
+              <div className="flex flex-col gap-1">
+                <label className="text-[10px] text-zinc-500 uppercase font-semibold">Atk Bonus</label>
+                <input type="number" className="bg-zinc-800 border border-zinc-700 rounded-lg px-2 py-1.5 text-sm text-zinc-100 text-center focus:outline-none focus:border-amber-500"
+                  value={favForm.attack_bonus} onChange={(e) => setFavForm((f) => ({ ...f, attack_bonus: e.target.value }))} />
+              </div>
+              <div className="flex flex-col gap-1">
+                <label className="text-[10px] text-zinc-500 uppercase font-semibold">Würfel</label>
+                <input className="bg-zinc-800 border border-zinc-700 rounded-lg px-2 py-1.5 text-sm text-zinc-100 text-center focus:outline-none focus:border-amber-500"
+                  placeholder="1d6" value={favForm.damage_dice} onChange={(e) => setFavForm((f) => ({ ...f, damage_dice: e.target.value }))} />
+              </div>
+              <div className="flex flex-col gap-1">
+                <label className="text-[10px] text-zinc-500 uppercase font-semibold">Schad Bonus</label>
+                <input type="number" className="bg-zinc-800 border border-zinc-700 rounded-lg px-2 py-1.5 text-sm text-zinc-100 text-center focus:outline-none focus:border-amber-500"
+                  value={favForm.damage_bonus} onChange={(e) => setFavForm((f) => ({ ...f, damage_bonus: e.target.value }))} />
+              </div>
+              <div className="flex flex-col gap-1">
+                <label className="text-[10px] text-zinc-500 uppercase font-semibold">Schadensart</label>
+                <select className="bg-zinc-800 border border-zinc-700 rounded-lg px-2 py-1.5 text-xs text-zinc-100 focus:outline-none focus:border-amber-500"
+                  value={favForm.damage_type} onChange={(e) => setFavForm((f) => ({ ...f, damage_type: e.target.value }))}>
+                  <option value="">–</option>
+                  {DAMAGE_TYPES.map((dt) => <option key={dt.id} value={dt.id}>{dt.icon} {dt.label}</option>)}
+                </select>
+              </div>
+            </div>
+            <div className="flex justify-end gap-2">
+              <button onClick={() => setShowFavForm(false)} className="text-xs px-3 py-1.5 rounded-lg bg-zinc-700 text-zinc-400 hover:text-zinc-200">Abbrechen</button>
+              <button onClick={saveFavorite} disabled={!favForm.name.trim()} className="flex items-center gap-1.5 text-xs px-3 py-1.5 rounded-lg bg-amber-600 hover:bg-amber-500 disabled:opacity-40 text-white font-semibold">
+                <BookmarkCheck className="w-3.5 h-3.5" /> Speichern
+              </button>
+            </div>
+          </div>
+        )}
+
+        {favorites.length === 0 && !showFavForm && (
+          <p className="text-xs text-zinc-600 text-center py-2">Noch keine Favoriten gespeichert</p>
+        )}
+
+        {favorites.length > 0 && (
+          <div className="space-y-1.5">
+            {favorites.map((fav) => {
+              const dt = damageOf(fav.damage_type)
+              return (
+                <div key={fav.id} className="group flex items-center gap-2 px-3 py-2 rounded-lg bg-zinc-800/60 border border-zinc-700/60 hover:border-zinc-600 transition-colors">
+                  <div className="flex-1 min-w-0">
+                    <p className="text-sm font-semibold text-zinc-100">{fav.name}</p>
+                    <p className="text-[11px] text-zinc-500">
+                      Atk {fmtBonus(fav.attack_bonus)} · {fav.damage_dice}{fav.damage_bonus !== 0 ? fmtBonus(fav.damage_bonus) : ''}
+                      {dt && <span> · {dt.icon} {dt.label}</span>}
+                    </p>
+                  </div>
+                  <button
+                    onClick={() => quickD20(fav.attack_bonus, `${fav.name} Angriff ${fmtBonus(fav.attack_bonus)}`)}
+                    className="flex items-center gap-1 px-2 py-1 rounded bg-amber-600/30 hover:bg-amber-600/60 border border-amber-500/60 text-[11px] font-bold text-amber-200 transition-colors"
+                  >
+                    Atk
+                  </button>
+                  <button
+                    onClick={() => quickDamage(fav.damage_dice, fav.damage_bonus, fav.damage_type ?? undefined, `${fav.name} Schaden`)}
+                    className="flex items-center gap-1 px-2 py-1 rounded bg-red-700/30 hover:bg-red-700/60 border border-red-500/60 text-[11px] font-bold text-red-200 transition-colors"
+                  >
+                    Dmg
+                  </button>
+                  <button
+                    onClick={() => deleteFavorite(fav.id)}
+                    className="opacity-0 group-hover:opacity-100 p-1 text-zinc-600 hover:text-red-400 transition-all"
+                    title="Löschen"
+                  >
+                    <X className="w-3.5 h-3.5" />
+                  </button>
+                </div>
+              )
+            })}
+          </div>
+        )}
+      </div>
 
       {/* Schadensart-Auswahl */}
       <div className="bg-zinc-900 border border-zinc-800 rounded-xl p-4 space-y-3">
