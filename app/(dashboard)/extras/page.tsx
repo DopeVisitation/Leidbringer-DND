@@ -7,21 +7,29 @@ import { useAuth } from '@/lib/hooks/useAuth'
 
 type CompanionType = 'pet' | 'summon' | 'familiar' | 'npc' | 'mount'
 
+interface DiceConfig { type: string; count: number; damageType?: string }
+
+// "Aktionen" section — matches token's FavoriteAction exactly (+ id + notes)
+interface CompanionAction {
+  id: string
+  name: string
+  attack_bonus: number
+  damage_bonus: number
+  dice_config: DiceConfig[]
+  notes: string
+}
+
+// "Fähigkeiten" section — spells/abilities with charges
 interface Ability {
   id: string
   name: string
   description: string
   charges_max: number
   charges_used: number
-  damage_formula: string
+  dice_config: DiceConfig[]
+  damage_bonus: number
   save_type: string
   save_dc: number
-}
-
-interface FavDice {
-  id: string
-  name: string
-  dice: string
 }
 
 interface CompanionCharacter {
@@ -33,16 +41,12 @@ interface CompanionCharacter {
   current_hp: number | null
   armor_class: number | null
   speed: number | null
-  str: number | null
-  dex: number | null
-  con: number | null
-  int: number | null
-  wis: number | null
-  cha: number | null
+  str: number | null; dex: number | null; con: number | null
+  int: number | null; wis: number | null; cha: number | null
   notes: string | null
   owner_id: string | null
   created_by: string | null
-  favorite_dice: FavDice[]
+  favorite_dice: CompanionAction[]
   abilities: Ability[]
 }
 
@@ -57,6 +61,8 @@ const TYPE_CONFIG: Record<CompanionType, { label: string; color: string; bg: str
 const STAT_ABBR = ['STR', 'DEX', 'CON', 'INT', 'WIS', 'CHA'] as const
 const STAT_KEYS = ['str', 'dex', 'con', 'int', 'wis', 'cha'] as const
 const SAVE_TYPES = ['', 'STR', 'DEX', 'CON', 'INT', 'WIS', 'CHA'] as const
+const DICE_TYPES = ['d4','d6','d8','d10','d12','d20'] as const
+const DAMAGE_TYPES = ['', 'Hieb', 'Stich', 'Wucht', 'Feuer', 'Kälte', 'Blitz', 'Säure', 'Gift', 'Nekrose', 'Strahlend', 'Kraft', 'Psychisch', 'Donner'] as const
 
 function statMod(v: number | null) {
   if (v == null) return null
@@ -88,9 +94,63 @@ function HpBar({ current, max }: { current: number; max: number }) {
   )
 }
 
+function NoteAppendSection({ c, onAppend }: { c: CompanionCharacter; onAppend: (c: CompanionCharacter, text: string) => Promise<void> }) {
+  const [open, setOpen] = useState(false)
+  const [text, setText] = useState('')
+  const [saving, setSaving] = useState(false)
+
+  const handleAdd = async () => {
+    if (!text.trim()) return
+    setSaving(true)
+    await onAppend(c, text)
+    setText('')
+    setOpen(false)
+    setSaving(false)
+  }
+
+  return (
+    <div className="pt-1">
+      {!open ? (
+        <button
+          onClick={() => setOpen(true)}
+          className="text-[10px] text-zinc-600 hover:text-zinc-400 underline"
+        >
+          + Notiz
+        </button>
+      ) : (
+        <div className="space-y-1.5 bg-zinc-800/50 rounded-lg p-2 border border-zinc-700/40">
+          <textarea
+            rows={2}
+            autoFocus
+            placeholder="Notiz eingeben…"
+            value={text}
+            onChange={e => setText(e.target.value)}
+            className="w-full bg-zinc-800 border border-zinc-700 rounded px-2 py-1 text-xs text-zinc-100 placeholder-zinc-600 focus:outline-none focus:border-amber-500 resize-none"
+          />
+          <div className="flex gap-1.5">
+            <button
+              onClick={handleAdd}
+              disabled={saving || !text.trim()}
+              className="flex-1 py-1 rounded bg-amber-600 hover:bg-amber-500 disabled:opacity-50 text-[10px] font-semibold text-white"
+            >
+              Eintrag hinzufügen
+            </button>
+            <button
+              onClick={() => { setOpen(false); setText('') }}
+              className="px-2 py-1 rounded border border-zinc-700 text-[10px] text-zinc-500 hover:text-zinc-300"
+            >
+              Abbruch
+            </button>
+          </div>
+        </div>
+      )}
+    </div>
+  )
+}
+
 function CompanionCard({
   c, isGM, userId, onEdit, onDelete, deleteConfirmId, setDeleteConfirmId,
-  onApplyHp, onUseAbility, onDeploy,
+  onApplyHp, onUseAbility, onDeploy, onRollAction, onRollAbility, onAppendNote,
 }: {
   c: CompanionCharacter
   isGM: boolean
@@ -102,6 +162,9 @@ function CompanionCard({
   onApplyHp: (c: CompanionCharacter, delta: number) => void
   onUseAbility: (c: CompanionCharacter, abilityId: string) => void
   onDeploy: (c: CompanionCharacter) => void
+  onRollAction: (c: CompanionCharacter, action: CompanionAction, rollType: 'attack' | 'damage') => void
+  onRollAbility: (c: CompanionCharacter, ability: Ability) => void
+  onAppendNote: (c: CompanionCharacter, text: string) => Promise<void>
 }) {
   const cfg = TYPE_CONFIG[c.type] ?? TYPE_CONFIG.npc
   const canEdit = isGM || c.created_by === userId
@@ -225,56 +288,120 @@ function CompanionCard({
           </div>
         )}
 
-        {/* Abilities */}
+        {/* Aktionen */}
+        {c.favorite_dice && c.favorite_dice.length > 0 && (
+          <div className="space-y-1 pt-2 border-t border-zinc-800">
+            <p className="text-[10px] uppercase font-semibold text-zinc-600">Aktionen</p>
+            {(c.favorite_dice as CompanionAction[]).map(a => (
+              <div key={a.id} className="flex items-center gap-1.5 px-2 py-1.5 rounded-lg bg-sky-950/20 border border-sky-900/40">
+                <span className="flex-1 text-xs text-zinc-200 truncate">{a.name}</span>
+                <button onClick={() => onRollAction(c, a, 'attack')}
+                  className="px-1.5 py-0.5 rounded bg-amber-900/30 border border-amber-700/50 text-[10px] text-amber-200 hover:bg-amber-900/50">
+                  Atk {a.attack_bonus >= 0 ? '+' : ''}{a.attack_bonus}
+                </button>
+                {a.dice_config.length > 0 && (
+                  <button onClick={() => onRollAction(c, a, 'damage')}
+                    className="px-1.5 py-0.5 rounded bg-red-950/40 border border-red-800/50 text-[10px] text-red-300 hover:bg-red-900/50">
+                    Dmg
+                  </button>
+                )}
+              </div>
+            ))}
+          </div>
+        )}
+
+        {/* Fähigkeiten */}
         {c.abilities && c.abilities.length > 0 && (
-          <div className="flex flex-wrap gap-1.5">
+          <div className="flex flex-wrap gap-1.5 pt-2 border-t border-zinc-800">
+            <p className="w-full text-[10px] uppercase font-semibold text-zinc-600">Fähigkeiten</p>
             {c.abilities.map((a) => {
               const hasCharges = a.charges_max > 0
               const exhausted = hasCharges && a.charges_used >= a.charges_max
+              const hasDice = a.dice_config && a.dice_config.length > 0
               return (
-                <button
-                  key={a.id}
-                  onClick={() => !exhausted && onUseAbility(c, a.id)}
-                  disabled={exhausted}
-                  title={a.description || a.name}
-                  className={`flex items-center gap-1 px-2 py-1 rounded text-[10px] font-semibold border transition-colors ${
-                    exhausted
-                      ? 'border-zinc-700 text-zinc-600 bg-zinc-800/40 cursor-not-allowed'
-                      : 'border-amber-700/60 text-amber-300 bg-amber-950/30 hover:bg-amber-950/60'
-                  }`}
-                >
-                  <span>{a.name}</span>
-                  {hasCharges && (
-                    <span className="flex gap-0.5 ml-0.5">
-                      {Array.from({ length: a.charges_max }).map((_, i) => (
-                        <span key={i} className={i < a.charges_used ? 'text-zinc-600' : 'text-amber-400'}>
-                          {i < a.charges_used ? '○' : '●'}
-                        </span>
-                      ))}
-                    </span>
+                <div key={a.id} className="flex items-center gap-1">
+                  <button
+                    onClick={() => !exhausted && onUseAbility(c, a.id)}
+                    disabled={exhausted}
+                    title={a.description || a.name}
+                    className={`flex items-center gap-1 px-2 py-1 rounded text-[10px] font-semibold border transition-colors ${
+                      exhausted
+                        ? 'border-zinc-700 text-zinc-600 bg-zinc-800/40 cursor-not-allowed'
+                        : 'border-amber-700/60 text-amber-300 bg-amber-950/30 hover:bg-amber-950/60'
+                    }`}
+                  >
+                    <span>{a.name}</span>
+                    {hasCharges && (
+                      <span className="flex gap-0.5 ml-0.5">
+                        {Array.from({ length: a.charges_max }).map((_, i) => (
+                          <span key={i} className={i < a.charges_used ? 'text-zinc-600' : 'text-amber-400'}>
+                            {i < a.charges_used ? '○' : '●'}
+                          </span>
+                        ))}
+                      </span>
+                    )}
+                  </button>
+                  {hasDice && !exhausted && (
+                    <button
+                      onClick={() => onRollAbility(c, a)}
+                      className="px-1.5 py-0.5 rounded bg-red-950/40 border border-red-800/50 text-[10px] text-red-300 hover:bg-red-900/50"
+                    >
+                      🎲
+                    </button>
                   )}
-                </button>
+                </div>
               )
             })}
           </div>
         )}
 
-        {/* Würfelfavoriten */}
-        {c.favorite_dice && c.favorite_dice.length > 0 && (
-          <div className="flex flex-wrap gap-1">
-            {c.favorite_dice.map((d) => (
-              <span key={d.id} className="px-2 py-0.5 rounded bg-zinc-800 border border-zinc-700 text-[10px] text-zinc-300" title={d.name}>
-                🎲 {d.dice}
-              </span>
-            ))}
+        {/* Notes */}
+        {c.notes && (
+          <div className="max-h-40 overflow-y-auto pt-2 border-t border-zinc-800">
+            <p className="text-xs text-zinc-400 whitespace-pre-wrap">{c.notes}</p>
           </div>
         )}
 
-        {/* Notes */}
-        {c.notes && (
-          <p className="text-xs text-zinc-400 whitespace-pre-wrap line-clamp-3">{c.notes}</p>
-        )}
+        {/* Note append */}
+        <NoteAppendSection c={c} onAppend={onAppendNote} />
       </div>
+    </div>
+  )
+}
+
+// Dice row sub-component for actions and abilities
+function DiceRow({ dc, onChange, onRemove }: {
+  dc: DiceConfig
+  onChange: (dc: DiceConfig) => void
+  onRemove: () => void
+}) {
+  return (
+    <div className="flex items-center gap-1">
+      <input
+        type="number"
+        min={1}
+        max={20}
+        value={dc.count}
+        onChange={e => onChange({ ...dc, count: parseInt(e.target.value) || 1 })}
+        className="w-12 bg-zinc-800 border border-zinc-700 rounded px-1.5 py-1 text-xs text-zinc-100 text-center focus:outline-none focus:border-amber-500"
+      />
+      <select
+        value={dc.type}
+        onChange={e => onChange({ ...dc, type: e.target.value })}
+        className="w-16 bg-zinc-800 border border-zinc-700 rounded px-1 py-1 text-xs text-zinc-300 focus:outline-none focus:border-amber-500"
+      >
+        {DICE_TYPES.map(d => <option key={d} value={d}>{d}</option>)}
+      </select>
+      <select
+        value={dc.damageType ?? ''}
+        onChange={e => onChange({ ...dc, damageType: e.target.value || undefined })}
+        className="flex-1 bg-zinc-800 border border-zinc-700 rounded px-1 py-1 text-xs text-zinc-300 focus:outline-none focus:border-amber-500"
+      >
+        {DAMAGE_TYPES.map(d => <option key={d} value={d}>{d || '—'}</option>)}
+      </select>
+      <button type="button" onClick={onRemove} className="p-1 text-zinc-600 hover:text-red-400 flex-shrink-0">
+        <X className="w-3 h-3" />
+      </button>
     </div>
   )
 }
@@ -297,8 +424,8 @@ function CompanionForm({
   onCancel: () => void
   saving: boolean
   isEdit: boolean
-  formDice: FavDice[]
-  setFormDice: (d: FavDice[]) => void
+  formDice: CompanionAction[]
+  setFormDice: (d: CompanionAction[]) => void
   formAbilities: Ability[]
   setFormAbilities: (a: Ability[]) => void
 }) {
@@ -312,22 +439,36 @@ function CompanionForm({
     />
   )
 
-  const addDice = () => {
-    setFormDice([...formDice, { id: crypto.randomUUID(), name: '', dice: '' }])
+  // Actions (Aktionen)
+  const addAction = () => {
+    setFormDice([...formDice, { id: crypto.randomUUID(), name: '', attack_bonus: 0, damage_bonus: 0, dice_config: [], notes: '' }])
   }
-  const removeDice = (id: string) => setFormDice(formDice.filter(d => d.id !== id))
-  const updateDice = (id: string, field: keyof FavDice, value: string) =>
-    setFormDice(formDice.map(d => d.id === id ? { ...d, [field]: value } : d))
+  const removeAction = (id: string) => setFormDice(formDice.filter(a => a.id !== id))
+  const updateAction = (id: string, patch: Partial<CompanionAction>) =>
+    setFormDice(formDice.map(a => a.id === id ? { ...a, ...patch } : a))
+  const addActionDice = (id: string) =>
+    setFormDice(formDice.map(a => a.id === id ? { ...a, dice_config: [...a.dice_config, { type: 'd6', count: 1 }] } : a))
+  const removeActionDice = (id: string, idx: number) =>
+    setFormDice(formDice.map(a => a.id === id ? { ...a, dice_config: a.dice_config.filter((_, i) => i !== idx) } : a))
+  const updateActionDice = (id: string, idx: number, dc: DiceConfig) =>
+    setFormDice(formDice.map(a => a.id === id ? { ...a, dice_config: a.dice_config.map((d, i) => i === idx ? dc : d) } : a))
 
+  // Abilities (Fähigkeiten)
   const addAbility = () => {
     setFormAbilities([...formAbilities, {
       id: crypto.randomUUID(), name: '', description: '',
-      charges_max: 0, charges_used: 0, damage_formula: '', save_type: '', save_dc: 0,
+      charges_max: 0, charges_used: 0, dice_config: [], damage_bonus: 0, save_type: '', save_dc: 0,
     }])
   }
   const removeAbility = (id: string) => setFormAbilities(formAbilities.filter(a => a.id !== id))
-  const updateAbility = (id: string, field: keyof Ability, value: string | number) =>
-    setFormAbilities(formAbilities.map(a => a.id === id ? { ...a, [field]: value } : a))
+  const updateAbility = (id: string, patch: Partial<Ability>) =>
+    setFormAbilities(formAbilities.map(a => a.id === id ? { ...a, ...patch } : a))
+  const addAbilityDice = (id: string) =>
+    setFormAbilities(formAbilities.map(a => a.id === id ? { ...a, dice_config: [...a.dice_config, { type: 'd6', count: 1 }] } : a))
+  const removeAbilityDice = (id: string, idx: number) =>
+    setFormAbilities(formAbilities.map(a => a.id === id ? { ...a, dice_config: a.dice_config.filter((_, i) => i !== idx) } : a))
+  const updateAbilityDice = (id: string, idx: number, dc: DiceConfig) =>
+    setFormAbilities(formAbilities.map(a => a.id === id ? { ...a, dice_config: a.dice_config.map((d, i) => i === idx ? dc : d) } : a))
 
   return (
     <form onSubmit={onSubmit} className="p-5 space-y-4">
@@ -406,57 +547,94 @@ function CompanionForm({
         </div>
       </div>
 
-      {/* Notes */}
+      {/* Notizen */}
       <div>
-        <label className="block text-xs font-medium text-zinc-400 mb-1.5">Actions / Fähigkeiten</label>
+        <label className="block text-xs font-medium text-zinc-400 mb-1.5">Notizen</label>
         <textarea
-          rows={8}
-          placeholder="Beschreibung, Hintergrund, Angriffsbeschreibungen…"
+          rows={6}
+          placeholder="Beschreibung, Hintergrund, Anmerkungen…"
           value={form.notes}
           onChange={(e) => setForm(p => ({ ...p, notes: e.target.value }))}
-          className="w-full bg-zinc-800 border border-zinc-700 rounded-lg px-3 py-2 text-sm text-zinc-100 placeholder-zinc-500 focus:outline-none focus:border-amber-500 resize-y min-h-[140px]"
+          className="w-full bg-zinc-800 border border-zinc-700 rounded-lg px-3 py-2 text-sm text-zinc-100 placeholder-zinc-500 focus:outline-none focus:border-amber-500 resize-y min-h-[100px]"
         />
       </div>
 
-      {/* Würfelfavoriten */}
+      {/* Aktionen */}
       <div>
         <div className="flex items-center justify-between mb-2">
-          <label className="text-xs font-medium text-zinc-400">Würfelfavoriten</label>
-          <button type="button" onClick={addDice}
+          <label className="text-xs font-medium text-zinc-400">Aktionen</label>
+          <button type="button" onClick={addAction}
             className="text-[10px] px-2 py-1 rounded bg-zinc-800 border border-zinc-700 text-zinc-400 hover:text-zinc-200 hover:border-zinc-500">
             + Hinzufügen
           </button>
         </div>
-        <div className="space-y-2">
-          {formDice.map(d => (
-            <div key={d.id} className="flex gap-2 items-center">
+        <div className="space-y-3">
+          {formDice.map(a => (
+            <div key={a.id} className="bg-zinc-800/50 border border-zinc-700/60 rounded-lg p-3 space-y-2">
+              <div className="flex gap-2 items-center">
+                <input
+                  type="text"
+                  placeholder="Name der Aktion"
+                  value={a.name}
+                  onChange={e => updateAction(a.id, { name: e.target.value })}
+                  className="flex-1 bg-zinc-800 border border-zinc-700 rounded px-2 py-1 text-xs text-zinc-100 placeholder-zinc-600 focus:outline-none focus:border-amber-500"
+                />
+                <button type="button" onClick={() => removeAction(a.id)}
+                  className="p-1 text-zinc-600 hover:text-red-400 flex-shrink-0">
+                  <X className="w-3.5 h-3.5" />
+                </button>
+              </div>
+              <div className="flex items-center gap-3">
+                <div className="flex items-center gap-1.5">
+                  <label className="text-[10px] text-zinc-500 whitespace-nowrap">Angriff +</label>
+                  <input
+                    type="number"
+                    value={a.attack_bonus}
+                    onChange={e => updateAction(a.id, { attack_bonus: parseInt(e.target.value) || 0 })}
+                    className="w-14 bg-zinc-800 border border-zinc-700 rounded px-1.5 py-1 text-xs text-zinc-100 text-center focus:outline-none focus:border-amber-500"
+                  />
+                </div>
+                <div className="flex items-center gap-1.5">
+                  <label className="text-[10px] text-zinc-500 whitespace-nowrap">Schaden +</label>
+                  <input
+                    type="number"
+                    value={a.damage_bonus}
+                    onChange={e => updateAction(a.id, { damage_bonus: parseInt(e.target.value) || 0 })}
+                    className="w-14 bg-zinc-800 border border-zinc-700 rounded px-1.5 py-1 text-xs text-zinc-100 text-center focus:outline-none focus:border-amber-500"
+                  />
+                </div>
+              </div>
+              {/* Würfel rows */}
+              <div className="space-y-1">
+                {a.dice_config.map((dc, idx) => (
+                  <DiceRow
+                    key={idx}
+                    dc={dc}
+                    onChange={newDc => updateActionDice(a.id, idx, newDc)}
+                    onRemove={() => removeActionDice(a.id, idx)}
+                  />
+                ))}
+                <button type="button" onClick={() => addActionDice(a.id)}
+                  className="text-[10px] px-2 py-0.5 rounded bg-zinc-800 border border-zinc-700 text-zinc-500 hover:text-zinc-300">
+                  + Würfel
+                </button>
+              </div>
               <input
                 type="text"
-                placeholder="Name"
-                value={d.name}
-                onChange={e => updateDice(d.id, 'name', e.target.value)}
-                className="flex-1 bg-zinc-800 border border-zinc-700 rounded px-2 py-1 text-xs text-zinc-100 placeholder-zinc-600 focus:outline-none focus:border-amber-500"
+                placeholder="Notiz (optional)"
+                value={a.notes}
+                onChange={e => updateAction(a.id, { notes: e.target.value })}
+                className="w-full bg-zinc-800 border border-zinc-700 rounded px-2 py-1 text-xs text-zinc-100 placeholder-zinc-600 focus:outline-none focus:border-amber-500"
               />
-              <input
-                type="text"
-                placeholder="2d6+3"
-                value={d.dice}
-                onChange={e => updateDice(d.id, 'dice', e.target.value)}
-                className="w-24 bg-zinc-800 border border-zinc-700 rounded px-2 py-1 text-xs text-zinc-100 placeholder-zinc-600 focus:outline-none focus:border-amber-500"
-              />
-              <button type="button" onClick={() => removeDice(d.id)}
-                className="p-1 text-zinc-600 hover:text-red-400">
-                <X className="w-3.5 h-3.5" />
-              </button>
             </div>
           ))}
         </div>
       </div>
 
-      {/* Aktionen / Fähigkeiten */}
+      {/* Fähigkeiten */}
       <div>
         <div className="flex items-center justify-between mb-2">
-          <label className="text-xs font-medium text-zinc-400">Aktionen / Fähigkeiten</label>
+          <label className="text-xs font-medium text-zinc-400">Fähigkeiten</label>
           <button type="button" onClick={addAbility}
             className="text-[10px] px-2 py-1 rounded bg-zinc-800 border border-zinc-700 text-zinc-400 hover:text-zinc-200 hover:border-zinc-500">
             + Hinzufügen
@@ -468,10 +646,9 @@ function CompanionForm({
               <div className="flex gap-2 items-center">
                 <input
                   type="text"
-                  required={formAbilities.some(ab => ab.id === a.id && ab.name !== '')}
-                  placeholder="Name der Fähigkeit *"
+                  placeholder="Name der Fähigkeit"
                   value={a.name}
-                  onChange={e => updateAbility(a.id, 'name', e.target.value)}
+                  onChange={e => updateAbility(a.id, { name: e.target.value })}
                   className="flex-1 bg-zinc-800 border border-zinc-700 rounded px-2 py-1 text-xs text-zinc-100 placeholder-zinc-600 focus:outline-none focus:border-amber-500"
                 />
                 <button type="button" onClick={() => removeAbility(a.id)}
@@ -483,37 +660,52 @@ function CompanionForm({
                 rows={2}
                 placeholder="Beschreibung…"
                 value={a.description}
-                onChange={e => updateAbility(a.id, 'description', e.target.value)}
+                onChange={e => updateAbility(a.id, { description: e.target.value })}
                 className="w-full bg-zinc-800 border border-zinc-700 rounded px-2 py-1 text-xs text-zinc-100 placeholder-zinc-600 focus:outline-none focus:border-amber-500 resize-none"
               />
               <div className="grid grid-cols-2 gap-2">
                 <div>
-                  <label className="text-[10px] text-zinc-500 mb-0.5 block">Schadenswürfel</label>
-                  <input
-                    type="text"
-                    placeholder="10d6"
-                    value={a.damage_formula}
-                    onChange={e => updateAbility(a.id, 'damage_formula', e.target.value)}
-                    className="w-full bg-zinc-800 border border-zinc-700 rounded px-2 py-1 text-xs text-zinc-100 placeholder-zinc-600 focus:outline-none focus:border-amber-500"
-                  />
-                </div>
-                <div>
-                  <label className="text-[10px] text-zinc-500 mb-0.5 block">Ladungen max (0=unbegrenzt)</label>
+                  <label className="text-[10px] text-zinc-500 mb-0.5 block">Ladungen max (0=∞)</label>
                   <input
                     type="number"
                     min={0}
                     value={a.charges_max}
-                    onChange={e => updateAbility(a.id, 'charges_max', parseInt(e.target.value) || 0)}
+                    onChange={e => updateAbility(a.id, { charges_max: parseInt(e.target.value) || 0 })}
                     className="w-full bg-zinc-800 border border-zinc-700 rounded px-2 py-1 text-xs text-zinc-100 focus:outline-none focus:border-amber-500"
                   />
                 </div>
+                <div>
+                  <label className="text-[10px] text-zinc-500 mb-0.5 block">Schadensbonus +</label>
+                  <input
+                    type="number"
+                    value={a.damage_bonus}
+                    onChange={e => updateAbility(a.id, { damage_bonus: parseInt(e.target.value) || 0 })}
+                    className="w-full bg-zinc-800 border border-zinc-700 rounded px-2 py-1 text-xs text-zinc-100 focus:outline-none focus:border-amber-500"
+                  />
+                </div>
+              </div>
+              {/* Würfel rows */}
+              <div className="space-y-1">
+                <label className="text-[10px] text-zinc-500 block">Schadenswürfel</label>
+                {a.dice_config.map((dc, idx) => (
+                  <DiceRow
+                    key={idx}
+                    dc={dc}
+                    onChange={newDc => updateAbilityDice(a.id, idx, newDc)}
+                    onRemove={() => removeAbilityDice(a.id, idx)}
+                  />
+                ))}
+                <button type="button" onClick={() => addAbilityDice(a.id)}
+                  className="text-[10px] px-2 py-0.5 rounded bg-zinc-800 border border-zinc-700 text-zinc-500 hover:text-zinc-300">
+                  + Würfel
+                </button>
               </div>
               <div className="grid grid-cols-2 gap-2">
                 <div>
                   <label className="text-[10px] text-zinc-500 mb-0.5 block">Rettungswurf</label>
                   <select
                     value={a.save_type}
-                    onChange={e => updateAbility(a.id, 'save_type', e.target.value)}
+                    onChange={e => updateAbility(a.id, { save_type: e.target.value })}
                     className="w-full bg-zinc-800 border border-zinc-700 rounded px-2 py-1 text-xs text-zinc-300 focus:outline-none focus:border-amber-500"
                   >
                     {SAVE_TYPES.map(s => <option key={s} value={s}>{s || '—'}</option>)}
@@ -527,7 +719,7 @@ function CompanionForm({
                       min={1}
                       max={30}
                       value={a.save_dc}
-                      onChange={e => updateAbility(a.id, 'save_dc', parseInt(e.target.value) || 0)}
+                      onChange={e => updateAbility(a.id, { save_dc: parseInt(e.target.value) || 0 })}
                       className="w-full bg-zinc-800 border border-zinc-700 rounded px-2 py-1 text-xs text-zinc-100 focus:outline-none focus:border-amber-500"
                     />
                   </div>
@@ -575,7 +767,7 @@ export default function ExtrasPage() {
   const [showModal, setShowModal]           = useState(false)
   const [editingItem, setEditingItem]       = useState<CompanionCharacter | null>(null)
   const [form, setForm]                     = useState<FormState>(EMPTY_FORM)
-  const [formDice, setFormDice]             = useState<FavDice[]>([])
+  const [formDice, setFormDice]             = useState<CompanionAction[]>([])
   const [formAbilities, setFormAbilities]   = useState<Ability[]>([])
   const [saving, setSaving]                 = useState(false)
   const [deleteConfirmId, setDeleteConfirmId] = useState<string | null>(null)
@@ -626,8 +818,31 @@ export default function ExtrasPage() {
       cha: c.cha != null ? String(c.cha) : '',
       notes: c.notes ?? '',
     })
-    setFormDice(c.favorite_dice ?? [])
-    setFormAbilities(c.abilities ?? [])
+
+    // Parse actions with backward compat
+    const parsedActions: CompanionAction[] = (c.favorite_dice ?? []).map((a: any) => ({
+      id: a.id ?? crypto.randomUUID(),
+      name: a.name ?? '',
+      attack_bonus: a.attack_bonus ?? 0,
+      damage_bonus: a.damage_bonus ?? 0,
+      dice_config: a.dice_config ?? (a.dice ? [{ type: 'd6', count: 1 }] : []),
+      notes: a.notes ?? '',
+    }))
+    setFormDice(parsedActions)
+
+    // Parse abilities with backward compat
+    const parsedAbilities: Ability[] = (c.abilities ?? []).map((a: any) => ({
+      id: a.id ?? crypto.randomUUID(),
+      name: a.name ?? '',
+      description: a.description ?? '',
+      charges_max: a.charges_max ?? 0,
+      charges_used: a.charges_used ?? 0,
+      dice_config: a.dice_config ?? (a.damage_formula ? [{ type: 'd6', count: 1 }] : []),
+      damage_bonus: a.damage_bonus ?? 0,
+      save_type: a.save_type ?? '',
+      save_dc: a.save_dc ?? 0,
+    }))
+    setFormAbilities(parsedAbilities)
     setShowModal(true)
   }
 
@@ -687,7 +902,8 @@ export default function ExtrasPage() {
     const current = c.current_hp ?? maxHp
     const newHp = Math.max(0, Math.min(maxHp, current + delta))
     await supabase.from('companion_characters').update({ current_hp: newHp }).eq('id', c.id)
-    await supabase.from('battle_placed_models').update({ current_hp: newHp }).eq('companion_id', c.id)
+    // Also sync to any linked battle_tokens
+    await supabase.from('battle_tokens').update({ current_hp: newHp }).eq('companion_id', c.id)
   }
 
   const useAbility = async (c: CompanionCharacter, abilityId: string) => {
@@ -696,33 +912,83 @@ export default function ExtrasPage() {
         ? { ...a, charges_used: a.charges_used + 1 } : a
     )
     await supabase.from('companion_characters').update({ abilities }).eq('id', c.id)
-    await supabase.from('battle_placed_models').update({ abilities }).eq('companion_id', c.id)
   }
 
   const deployToMap = async (c: CompanionCharacter) => {
     const { data: maps } = await supabase.from('battle_maps').select('id').eq('is_active', true).limit(1)
-    if (!maps?.length) { alert('Kein aktives Spielfeld vorhanden.'); return }
+    if (!maps?.length) { alert('Kein aktives Spielfeld vorhanden. Bitte erst eine Kampfkarte erstellen.'); return }
     const mapId = maps[0].id
-    await supabase.from('battle_placed_models').insert({
-      map_id:        mapId,
-      companion_id:  c.id,
-      name:          c.name,
-      image_url:     c.image_url ?? '',
-      col:           0, row: 0,
-      span:          1,
-      rotation:      0,
-      is_hidden:     false,
-      z_index:       10,
-      current_hp:    c.current_hp ?? c.max_hp,
-      max_hp:        c.max_hp,
-      armor_class:   c.armor_class,
-      speed:         c.speed,
-      model_stats:   { str: c.str, dex: c.dex, con: c.con, int: c.int, wis: c.wis, cha: c.cha },
-      notes:         c.notes,
-      favorite_dice: c.favorite_dice ?? [],
-      abilities:     c.abilities ?? [],
+    const { error } = await supabase.from('battle_tokens').insert({
+      map_id:           mapId,
+      companion_id:     c.id,
+      name:             c.name,
+      icon:             c.image_url || '🐾',
+      token_type:       'npc',
+      col:              0,
+      row:              0,
+      max_hp:           c.max_hp,
+      current_hp:       c.current_hp ?? c.max_hp,
+      armor_class:      c.armor_class,
+      speed:            c.speed,
+      initiative:       null,
+      challenge_rating: null,
+      conditions:       [],
+      notes:            c.notes,
+      stats:            { str: c.str, dex: c.dex, con: c.con, int: c.int, wis: c.wis, cha: c.cha },
+      is_hidden:        false,
+      favorite_actions: (c.favorite_dice ?? []).map(a => ({
+        name:         a.name,
+        attack_bonus: a.attack_bonus,
+        damage_bonus: a.damage_bonus,
+        dice_config:  a.dice_config,
+      })),
+      player_user_id:   null,
+      token_size:       'medium',
+      movement_used:    0,
+      is_staged:        true,
     })
-    alert(`${c.name} wurde auf dem Spielfeld bereitgestellt (Feld 0,0). Bitte auf dem Spielfeld positionieren.`)
+    if (error) { alert(`Fehler beim Bereitstellen: ${error.message}`); return }
+    alert(`${c.name} wurde in der Bereitstellung platziert! Wechsle zum Spielfeld-Tab.`)
+  }
+
+  const rollCompanionAction = (c: CompanionCharacter, action: CompanionAction, rollType: 'attack' | 'damage') => {
+    if (rollType === 'attack') {
+      const roll = Math.floor(Math.random() * 20) + 1 + action.attack_bonus
+      alert(`${c.name} — ${action.name} Angriff: ${roll} (1d20 ${action.attack_bonus >= 0 ? '+' : ''}${action.attack_bonus})`)
+    } else {
+      let total = action.damage_bonus
+      const parts: string[] = []
+      for (const dc of action.dice_config) {
+        const sides = parseInt(dc.type.slice(1))
+        let sum = 0
+        for (let i = 0; i < dc.count; i++) sum += Math.floor(Math.random() * sides) + 1
+        total += sum
+        parts.push(`${dc.count}${dc.type}`)
+      }
+      alert(`${c.name} — ${action.name} Schaden: ${total} (${parts.join('+')}${action.damage_bonus ? `+${action.damage_bonus}` : ''})`)
+    }
+  }
+
+  const rollAbility = (c: CompanionCharacter, ability: Ability) => {
+    let total = ability.damage_bonus
+    const parts: string[] = []
+    for (const dc of ability.dice_config) {
+      const sides = parseInt(dc.type.slice(1))
+      let sum = 0
+      for (let i = 0; i < dc.count; i++) sum += Math.floor(Math.random() * sides) + 1
+      total += sum
+      parts.push(`${dc.count}${dc.type}`)
+    }
+    const saveInfo = ability.save_type ? ` (RW: ${ability.save_type} SG ${ability.save_dc})` : ''
+    alert(`${c.name} — ${ability.name}: ${total} Schaden${saveInfo} (${parts.join('+')}${ability.damage_bonus ? `+${ability.damage_bonus}` : ''})`)
+  }
+
+  const appendNote = async (c: CompanionCharacter, newText: string) => {
+    const date = new Date().toLocaleDateString('de-DE', { day: '2-digit', month: '2-digit', year: 'numeric', hour: '2-digit', minute: '2-digit' })
+    const entry = `[${date}] ${newText.trim()}`
+    const existing = c.notes ?? ''
+    const updated = existing ? `${entry}\n\n${existing}` : entry
+    await supabase.from('companion_characters').update({ notes: updated }).eq('id', c.id)
   }
 
   const filtered = companions.filter(c => {
@@ -808,6 +1074,9 @@ export default function ExtrasPage() {
               onApplyHp={applyCompanionHp}
               onUseAbility={useAbility}
               onDeploy={deployToMap}
+              onRollAction={rollCompanionAction}
+              onRollAbility={rollAbility}
+              onAppendNote={appendNote}
             />
           ))}
         </div>

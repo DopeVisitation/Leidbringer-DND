@@ -52,6 +52,7 @@ interface BattleToken {
   is_hidden: boolean; favorite_actions: FavoriteAction[]
   player_user_id: string | null; token_size: TokenSize; movement_used: number
   is_staged: boolean
+  companion_id: string | null
 }
 
 interface DiceFavorite {
@@ -513,12 +514,13 @@ function TokenPiece({ token, selected, cellSize, isMoving, isDragged, isActiveTu
 }
 
 // ─── Token Panel ──────────────────────────────────────────────────────────────
-function TokenPanel({ token, onUpdate, onDelete, onClose, onEdit, isGM, myFavorites, onRoll, ownToken, onStartMove, moveMode, movementInfo }: {
+function TokenPanel({ token, onUpdate, onDelete, onClose, onEdit, isGM, myFavorites, onRoll, ownToken, onStartMove, moveMode, movementInfo, onSaveToExtras }: {
   token: BattleToken; onUpdate: (t: Partial<BattleToken>) => void; onDelete: () => void
   onClose: () => void; onEdit: () => void; isGM: boolean; myFavorites: DiceFavorite[]
   onRoll: (cfg: DiceConfig[], bonus: number, label: string) => void
   ownToken: boolean; onStartMove: () => void; moveMode: boolean
   movementInfo?: { used: number; speed: number; feetPerCell: number }
+  onSaveToExtras?: () => void
 }) {
   const [hpInput, setHpInput] = useState('')
   const [showCondPicker, setShowCondPicker] = useState(false)
@@ -742,6 +744,16 @@ function TokenPanel({ token, onUpdate, onDelete, onClose, onEdit, isGM, myFavori
             <Trash2 className="w-3 h-3" /> Entfernen
           </button>
         </div>
+      )}
+
+      {/* Save to Extras */}
+      {isGM && onSaveToExtras && (
+        <button
+          onClick={onSaveToExtras}
+          className="w-full flex items-center justify-center gap-1.5 py-1.5 rounded-lg bg-emerald-950/30 border border-emerald-800/40 text-xs text-emerald-400 hover:text-emerald-200 mt-1"
+        >
+          🐾 Zu Extras speichern
+        </button>
       )}
 
       {token.notes && (
@@ -1230,7 +1242,7 @@ export default function BattleMapPage() {
     setTokens((data ?? []).map((t: any) => ({
       ...t, conditions: t.conditions ?? [], favorite_actions: t.favorite_actions ?? [],
       token_size: t.token_size ?? 'medium', movement_used: t.movement_used ?? 0,
-      is_staged: t.is_staged ?? false,
+      is_staged: t.is_staged ?? false, companion_id: t.companion_id ?? null,
     })))
   }, [supabase])
 
@@ -1590,6 +1602,13 @@ export default function BattleMapPage() {
   const updateToken = async (id: string, patch: Partial<BattleToken>) => {
     await supabase.from('battle_tokens').update(patch).eq('id', id)
     setTokens(prev => prev.map(t => t.id === id ? { ...t, ...patch } : t))
+    // Sync HP to companion_characters if linked
+    if (patch.current_hp !== undefined) {
+      const token = tokens.find(t => t.id === id)
+      if (token?.companion_id) {
+        await supabase.from('companion_characters').update({ current_hp: patch.current_hp }).eq('id', token.companion_id)
+      }
+    }
   }
 
   // ── V19: Deploy token by click-to-place ──
@@ -1633,6 +1652,38 @@ export default function BattleMapPage() {
     await supabase.from('battle_tokens').delete().eq('id', id)
     setTokens(prev => prev.filter(t => t.id !== id))
     if (selectedToken === id) { setSelectedToken(null); setMoveMode(false); setMovingTokenId(null) }
+  }
+
+  const saveTokenToExtras = async (token: BattleToken) => {
+    const { error } = await supabase.from('companion_characters').insert({
+      name:          token.name,
+      type:          'npc',
+      image_url:     token.icon?.startsWith('http') ? token.icon : null,
+      max_hp:        token.max_hp,
+      current_hp:    token.current_hp,
+      armor_class:   token.armor_class,
+      speed:         token.speed,
+      str:           token.stats?.str ?? null,
+      dex:           token.stats?.dex ?? null,
+      con:           token.stats?.con ?? null,
+      int:           token.stats?.int ?? null,
+      wis:           token.stats?.wis ?? null,
+      cha:           token.stats?.cha ?? null,
+      notes:         token.notes,
+      favorite_dice: (token.favorite_actions ?? []).map(a => ({
+        id:           crypto.randomUUID(),
+        name:         a.name,
+        attack_bonus: a.attack_bonus,
+        damage_bonus: a.damage_bonus,
+        dice_config:  a.dice_config,
+        notes:        '',
+      })),
+      abilities:     [],
+      created_by:    user?.id,
+      owner_id:      user?.id,
+    })
+    if (error) alert(`Fehler: ${error.message}`)
+    else alert(`${token.name} wurde in Extras gespeichert!`)
   }
 
   const addMyPlayerToken = async () => {
@@ -3717,6 +3768,7 @@ export default function BattleMapPage() {
                     speed: sel.speed,
                     feetPerCell: activeMap?.feet_per_cell ?? 5,
                   } : undefined}
+                  onSaveToExtras={() => saveTokenToExtras(sel)}
                 />
               </div>
             )}
