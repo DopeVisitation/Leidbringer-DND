@@ -1093,6 +1093,8 @@ export default function BattleMapPage() {
   const zoomRef = useRef(1.0)
   const viewportRef = useRef<HTMLDivElement>(null)
   const isPanningRef = useRef(false)
+  const isMapPanRef = useRef(false)   // left-click drag on background
+  const mapPanMovedRef = useRef(false) // true if mouse moved while background-panning
   const panStartRef = useRef({ x: 0, y: 0, px: 0, py: 0 })
   useEffect(() => { zoomRef.current = zoom }, [zoom])
 
@@ -1309,6 +1311,17 @@ export default function BattleMapPage() {
         setPanY(panStartRef.current.py + dy)
         return
       }
+        // Left-click background pan
+      if (isMapPanRef.current) {
+        const dx = e.clientX - panStartRef.current.x
+        const dy = e.clientY - panStartRef.current.y
+        if (Math.sqrt(dx * dx + dy * dy) > THRESHOLD) {
+          mapPanMovedRef.current = true
+          setPanX(panStartRef.current.px + dx)
+          setPanY(panStartRef.current.py + dy)
+        }
+        return
+      }
 
       // Fog brush
       if (fogPaintingRef.current && mapRef.current) {
@@ -1365,6 +1378,14 @@ export default function BattleMapPage() {
       // Middle-click pan end
       if (isPanningRef.current) {
         isPanningRef.current = false
+        return
+      }
+      // Left-click background pan end
+      if (isMapPanRef.current) {
+        isMapPanRef.current = false
+        const moved = mapPanMovedRef.current
+        mapPanMovedRef.current = false
+        if (moved) return  // was a drag, suppress click
         return
       }
 
@@ -2198,6 +2219,13 @@ export default function BattleMapPage() {
           updateMap({ fog_cells: fc.filter(f => !(f.col === cell.col && f.row === cell.row)) })
         }
       }
+      return
+    }
+    // Left-click drag on background = pan (no special mode, no token grabbed)
+    if (!rulerMode && !terrainMode && !effectMode && !deployingTokenId && !deployingModelData && !deployingAssetData && !moveMode) {
+      isMapPanRef.current = true
+      mapPanMovedRef.current = false
+      panStartRef.current = { x: e.clientX, y: e.clientY, px: panX, py: panY }
     }
   }
 
@@ -3990,7 +4018,7 @@ export default function BattleMapPage() {
                     ? `url("${activeMap.image_url}")`
                     : 'linear-gradient(160deg, #0c0008 0%, #050010 40%, #0a0005 70%, #000000 100%)',
                   backgroundSize: 'cover', backgroundPosition: 'center',
-                  cursor: rulerMode ? 'crosshair' : fogMode ? 'crosshair' : terrainMode ? 'crosshair' : effectMode ? 'cell' : moveMode ? 'pointer' : dragRender ? 'grabbing' : 'default',
+                  cursor: rulerMode ? 'crosshair' : fogMode ? 'crosshair' : terrainMode ? 'crosshair' : effectMode ? 'cell' : moveMode ? 'pointer' : dragRender ? 'grabbing' : isMapPanRef.current ? 'grabbing' : deployingTokenId || deployingModelData || deployingAssetData ? 'cell' : 'grab',
                 }}
                 onClick={handleGridClick}
                 onMouseDown={handleMapMouseDown}
