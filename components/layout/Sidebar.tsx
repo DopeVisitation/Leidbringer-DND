@@ -7,6 +7,7 @@ import {
   CalendarDays, BookOpen, ScrollText, LogOut, Shield, Sword, Dices,
   Backpack, Map, MapPin, Settings, Image as ImageIcon, BookText,
   MessageSquare, Tag, Swords, Bell, GripVertical, Lock, Unlock,
+  Users, GitBranch,
 } from 'lucide-react'
 import { cn } from '@/lib/utils'
 import { useAuth } from '@/lib/hooks/useAuth'
@@ -17,6 +18,8 @@ const DEFAULT_NAV: { href: string; label: string; icon: React.ElementType }[] = 
   { href: '/sessions',   label: 'Sessions',           icon: CalendarDays },
   { href: '/summaries',  label: 'Zusammenfassungen',  icon: BookText     },
   { href: '/quests',     label: 'Quests',             icon: Map          },
+  { href: '/npcs',       label: 'NPCs',               icon: Users        },
+  { href: '/plot',       label: 'Offene Fäden',       icon: GitBranch    },
   { href: '/maps',       label: 'Karte',              icon: MapPin       },
   { href: '/dice',       label: 'Würfelwürfe',        icon: Dices        },
   { href: '/loot',       label: 'Loot',               icon: Backpack     },

@@ -72,25 +72,28 @@ interface CombatLogEntry {
 
 // ─── Constants ────────────────────────────────────────────────────────────────
 const TOKEN_ICONS = [
-  '⚔️','🗡️','🛡️','🏹','🪖','🔱','⚜️','🪃','🏴','🎖️',
-  '🔮','🪄','📿','⭐','🌟','✨','💫','🌀','🔯','☄️',
-  '🌙','☀️','⚡','🔥','❄️','🌊','🌪️','🌈','🌌','🌠',
-  '💀','☠️','🦴','👻','🧟','🧛','🕸️','🕯️','⚰️','🪦',
-  '🌑','🌚','🕳️','🖤','🩸','💔','🧠','👁️','🫀','🌃',
-  '👹','👺','😈','👿','💢','🌋','🔴','⛔','👾','🐾',
-  '🕷️','🦂','🐍','🦇','🐜','🪲','🦟','🦠','🐛','🪳',
-  '🐉','🐲','🦅','🦉','🦋','🦚','🐦‍⬛','🪽','🦜','🦆',
-  '🐺','🦁','🐗','🐻','🐻‍❄️','🦊','🐅','🐆','🐘','🦛',
-  '🦈','🦖','🦕','🐊','🐢','🦎','🐸','🐙','🦑','🦐',
-  '🦀','🦞','🪼','🦭','🐬','🐳','🦏','🦒','🦬','🦣',
-  '🧙','🧝','🧞','🧜','🧚','🧌','🥷','🤴','👸','🧓',
-  '🎭','🃏','🎩','🏴‍☠️','🧔','👳','🎪','🤠','🧟‍♀️','🧛‍♀️',
-  '🌲','🌴','🍄','🌿','🪨','🏔️','🗻','🌋','🏞️','🗺️',
-  '🏰','🗼','⛩️','🏯','🕌','⛪','🗽','🏛️','🌉','🌁',
-  '🗝️','⚗️','🧪','🏺','📜','🔑','⚙️','🧲','💣','🪤',
-  '💎','💍','🪬','🧿','🎯','🎲','🀄','🎴','🏆','🥇',
-  '💥','🌟','✨','🌠','🌌','🌈','☄️','🌀','🔯','⛤',
-  '🫧','🧊','💧','🫙','🌫️','🌬️','🌩️','🌧️','⛅','🌤️',
+  // Players / Heroes
+  '⚔️','🛡️','🏹','🪄','🔮','🗡️','🪃','💪','🤺','🧙',
+  // Humanoids
+  '🧝','🧟','🧛','🧜','🧚','👹','👺','🧞','🧌','💂',
+  '👑','🤴','👸','🧔','🥷','🤠','🦸','🦹','🧑‍⚕️','🧑‍🔬',
+  // Undead / Dark
+  '💀','☠️','👻','🦴','🧠','👁️','🫀','🕷️','🦇','🐍',
+  // Dragons / Beasts
+  '🐉','🐲','🦄','🦁','🐯','🐻','🐺','🦊','🦝','🦨',
+  '🐗','🦏','🐘','🦍','🦧','🐊','🦎','🐢','🦕','🦖',
+  // Monsters
+  '👾','👿','😈','🤡','🎃','🦑','🐙','🦈','🐡','🦞',
+  '🦂','🕸️','🦟','🐛','🐜','🦋','🪲','🪳','🦗','🐝',
+  // Mythical / Magic
+  '🔥','❄️','⚡','🌊','🌪️','☄️','💥','✨','🌟','⭐',
+  '🌙','☀️','🌈','🍄','🌿','🌸','💎','🔑','📜','⚗️',
+  // Objects / Environment
+  '🏰','⛪','🏚️','🌋','⛰️','🌲','🌳','🌵','🪨','💧',
+  '🔔','🪬','🗺️','⚙️','🔩','🪤','🧲','💣','🪃','🛡',
+  // Animals
+  '🐎','🦅','🦉','🦆','🐓','🦢','🦚','🦜','🐦','🦤',
+  '🐆','🐅','🦓','🦒','🐪','🦘','🦫','🦦','🦥','🐿️',
 ]
 
 interface ConditionDef { id: string; icon: string; color: string; bg: string; border: string }
@@ -755,6 +758,19 @@ export default function BattleMapPage() {
   // ── V17: Staging ──
   const [showStaging, setShowStaging] = useState(true)
 
+  // ── Encounter Presets ──
+  const [encounters, setEncounters] = useState<Array<{id: string; name: string; description?: string; tokens: any[]}>>([])
+  const [showEncounterForm, setShowEncounterForm] = useState(false)
+  const [encName, setEncName] = useState('')
+  const [showEncounters, setShowEncounters] = useState(false)
+
+  // ── Music Player ──
+  const MUSIC_ID = '00000000-0000-0000-0000-000000000001'
+  const [musicState, setMusicState] = useState<{url?: string; title?: string; is_playing: boolean; volume: number} | null>(null)
+  const [showMusicPanel, setShowMusicPanel] = useState(false)
+  const [musicInput, setMusicInput] = useState('')
+  const [musicTitle, setMusicTitle] = useState('')
+
   // ── V17: Dice Wall ──
   const [diceWallRolls, setDiceWallRolls] = useState<DiceRollEntry[]>([])
   const [showDiceWall, setShowDiceWall] = useState(true)
@@ -1145,6 +1161,63 @@ export default function BattleMapPage() {
     setCombatLog((data ?? []) as CombatLogEntry[])
   }, [supabase])
 
+  // ── Encounter helpers ──
+  const loadEncounters = useCallback(async () => {
+    const { data } = await supabase.from('encounters').select('*').order('created_at', { ascending: false })
+    setEncounters(data ?? [])
+  }, [supabase])
+
+  const saveEncounter = async () => {
+    if (!encName.trim() || !isGM) return
+    const tokenData = stagedTokens.map(t => ({
+      name: t.name, emoji: t.icon, color: '#ef4444',
+      hp: t.current_hp ?? t.max_hp, max_hp: t.max_hp, ac: t.armor_class,
+    }))
+    await supabase.from('encounters').insert({ name: encName, tokens: tokenData })
+    setEncName(''); setShowEncounterForm(false)
+    loadEncounters()
+  }
+
+  const loadEncounter = async (enc: typeof encounters[0]) => {
+    if (!activeMap || !isGM) return
+    for (const t of enc.tokens) {
+      await supabase.from('battle_tokens').insert({
+        map_id: activeMap.id,
+        name: t.name ?? 'Token',
+        icon: t.emoji ?? '👾',
+        col: -1, row: -1,
+        max_hp: t.hp ?? 10, current_hp: t.hp ?? 10, armor_class: t.ac ?? 10,
+        speed: 30, initiative: 0, challenge_rating: null,
+        conditions: [], notes: null, stats: null,
+        is_hidden: false, favorite_actions: [],
+        player_user_id: null, token_size: 'medium', movement_used: 0,
+        is_staged: true, token_type: 'monster',
+      })
+    }
+    loadTokens(activeMap.id)
+  }
+
+  // ── Music helpers ──
+  function extractYouTubeId(url: string): string | null {
+    const m = url.match(/(?:youtube\.com\/watch\?v=|youtu\.be\/|youtube\.com\/embed\/)([^&\n?#]+)/)
+    return m?.[1] ?? null
+  }
+
+  const loadMusic = useCallback(async () => {
+    const { data } = await supabase.from('music_state').select('*').eq('id', MUSIC_ID).single()
+    if (data) {
+      setMusicState(data)
+      if (data.url) setMusicInput(data.url)
+      if (data.title) setMusicTitle(data.title)
+    }
+  }, [supabase, MUSIC_ID])
+
+  const updateMusic = async (patch: Partial<typeof musicState>) => {
+    const newState = { ...(musicState ?? { is_playing: false, volume: 80 }), ...patch }
+    setMusicState(newState as typeof musicState)
+    await supabase.from('music_state').upsert({ id: MUSIC_ID, ...newState })
+  }
+
   // ── V17: Add combat log entry ──
   const addLogEntry = useCallback(async (
     mapId: string, actorName: string, actionType: string, description: string, isGmAction: boolean
@@ -1190,6 +1263,20 @@ export default function BattleMapPage() {
     return () => { supabase.removeChannel(ch) }
   }, [loadDiceWall, supabase])
 
+  // ── Encounter presets: load when GM ──
+  useEffect(() => {
+    if (isGM) loadEncounters()
+  }, [isGM, loadEncounters])
+
+  // ── Music: load + realtime ──
+  useEffect(() => {
+    loadMusic()
+    const ch = supabase.channel('music_state_rt')
+      .on('postgres_changes', { event: '*', schema: 'public', table: 'music_state' }, () => loadMusic())
+      .subscribe()
+    return () => { supabase.removeChannel(ch) }
+  }, [loadMusic, supabase])
+
   // ── Map CRUD ──
   const createMap = async () => {
     if (!user) return
@@ -1216,10 +1303,10 @@ export default function BattleMapPage() {
   }
 
   // ── Token CRUD ──
-  const addTokenFromForm = async (form: typeof BLANK_TOKEN_FORM, override?: { player_user_id?: string }) => {
+  const addTokenFromForm = async (form: typeof BLANK_TOKEN_FORM, override?: { player_user_id?: string; forceStaged?: boolean }) => {
     if (!activeMap || !user) return
     const isPlayer = form.token_type === 'player' && override?.player_user_id != null
-    const isStaged = isGM && !isPlayer // GM-added go to staging; player "Meine Figur" goes directly to map
+    const isStaged = override?.forceStaged ? true : isGM && !isPlayer // GM-added go to staging; player "Meine Figur" goes directly to map; player summons go staged
     await supabase.from('battle_tokens').insert({
       map_id: activeMap.id, token_type: form.token_type,
       name: form.name, icon: form.icon, col: 0, row: 0,
@@ -1660,6 +1747,18 @@ export default function BattleMapPage() {
               <span className="text-xs leading-none">+</span> Meine Figur
             </button>
           )}
+          {!isGM && activeMap && (
+            <button onClick={() => setShowAddModal(true)}
+              className="flex items-center gap-1 px-2 py-1.5 rounded bg-violet-950/40 border border-violet-800/50 text-xs text-violet-300 hover:bg-violet-950/60">
+              <span className="text-xs leading-none">+</span> Beschwörung
+            </button>
+          )}
+          {activeMap && (
+            <button onClick={() => setShowMusicPanel(!showMusicPanel)}
+              className={`flex items-center gap-1 px-2 py-1.5 rounded border text-xs transition-colors ${showMusicPanel ? 'bg-emerald-900/30 border-emerald-700/60 text-emerald-300' : 'bg-zinc-800/80 border-zinc-700/60 text-zinc-500 hover:text-zinc-300'}`}>
+              🎵 Musik
+            </button>
+          )}
 
           {/* ── V17: Zoom controls ── */}
           {activeMap && activeTab === 'map' && (
@@ -1906,6 +2005,64 @@ export default function BattleMapPage() {
         </div>
       )}
 
+      {/* ── Music Player Bar ── */}
+      {showMusicPanel && activeMap && (
+        <div className="flex-shrink-0 px-4 py-2.5 bg-zinc-900/90 border-b border-emerald-900/40 flex items-center gap-3 flex-wrap">
+          <span className="text-base">🎵</span>
+          {musicState?.title && (
+            <span className="text-xs font-semibold text-emerald-300 max-w-40 truncate">{musicState.title}</span>
+          )}
+          {musicState?.is_playing
+            ? <span className="text-[10px] text-emerald-500 animate-pulse">▶ Spielt…</span>
+            : <span className="text-[10px] text-zinc-600">⏸ Pausiert</span>
+          }
+          {isGM && (
+            <>
+              <input
+                className="flex-1 min-w-40 max-w-64 bg-zinc-800 border border-zinc-700 rounded px-2 py-1 text-xs text-zinc-100 placeholder-zinc-600 focus:outline-none focus:border-emerald-700"
+                placeholder="YouTube-URL…"
+                value={musicInput}
+                onChange={e => setMusicInput(e.target.value)}
+              />
+              <input
+                className="w-32 bg-zinc-800 border border-zinc-700 rounded px-2 py-1 text-xs text-zinc-100 placeholder-zinc-600 focus:outline-none focus:border-emerald-700"
+                placeholder="Titel…"
+                value={musicTitle}
+                onChange={e => setMusicTitle(e.target.value)}
+              />
+              <button
+                onClick={() => updateMusic({ url: musicInput, title: musicTitle || musicInput, is_playing: true, volume: musicState?.volume ?? 80 })}
+                className="px-2.5 py-1 rounded bg-emerald-800/60 border border-emerald-700/50 text-xs text-emerald-200 hover:bg-emerald-800">
+                Laden & Starten
+              </button>
+              <button
+                onClick={() => updateMusic({ is_playing: !musicState?.is_playing })}
+                className={`px-2.5 py-1 rounded border text-xs transition-colors ${musicState?.is_playing ? 'bg-amber-900/30 border-amber-700/50 text-amber-300' : 'bg-zinc-800 border-zinc-700 text-zinc-400 hover:text-zinc-200'}`}>
+                {musicState?.is_playing ? '⏸ Pause' : '▶ Play'}
+              </button>
+              <button onClick={() => updateMusic({ url: undefined, title: undefined, is_playing: false })}
+                className="px-2 py-1 rounded border border-zinc-700 bg-zinc-800/60 text-xs text-zinc-500 hover:text-red-400">
+                Stop
+              </button>
+            </>
+          )}
+          <button onClick={() => setShowMusicPanel(false)} className="ml-auto text-zinc-600 hover:text-zinc-400">
+            <X className="w-3.5 h-3.5" />
+          </button>
+        </div>
+      )}
+      {/* Hidden YouTube iframe for audio */}
+      {musicState?.url && extractYouTubeId(musicState.url) && (
+        <div style={{ position: 'fixed', width: 0, height: 0, overflow: 'hidden', top: '-9999px' }}>
+          <iframe
+            key={`${extractYouTubeId(musicState.url)}-${musicState.is_playing}`}
+            src={`https://www.youtube.com/embed/${extractYouTubeId(musicState.url)}?autoplay=${musicState.is_playing ? 1 : 0}&loop=1&playlist=${extractYouTubeId(musicState.url)}`}
+            allow="autoplay"
+            title="music"
+          />
+        </div>
+      )}
+
       {/* ── Movement Bar ── */}
       {moveMode && moveTarget && (
         <div className="flex-shrink-0 px-4 py-2 bg-emerald-950/40 border-b border-emerald-800/40 flex items-center gap-3">
@@ -1937,8 +2094,8 @@ export default function BattleMapPage() {
         <TokenModal title="Token hinzufügen" onSave={form => addTokenFromForm(form)} onClose={() => setShowAddModal(false)} />
       )}
       {showAddModal && !isGM && (
-        <TokenModal title="Meine Figur" initial={myTokenInitial}
-          onSave={form => addTokenFromForm(form, { player_user_id: user?.id })}
+        <TokenModal title="Beschwörung / Figur hinzufügen" initial={myTokenInitial}
+          onSave={form => addTokenFromForm(form, { player_user_id: user?.id, forceStaged: true })}
           onClose={() => setShowAddModal(false)} />
       )}
       {editingToken && (
@@ -2258,8 +2415,8 @@ export default function BattleMapPage() {
           /* ── Map View ── */
           <div className="flex-1 overflow-hidden flex">
 
-            {/* ── V17: Staging Panel (GM only, left side) ── */}
-            {isGM && activeMap && (
+            {/* ── Staging Panel (all users, left side) ── */}
+            {activeMap && (
               <div className={`flex-shrink-0 bg-zinc-950 border-r border-zinc-800/80 flex flex-col transition-all ${showStaging ? 'w-56' : 'w-8'}`}>
                 <button
                   onClick={() => setShowStaging(!showStaging)}
@@ -2301,6 +2458,69 @@ export default function BattleMapPage() {
                         </button>
                       </div>
                     ))}
+
+                    {/* ── Encounter Presets (GM only) ── */}
+                    {isGM && (
+                      <div className="pt-2 border-t border-zinc-800/60 space-y-1.5">
+                        <button
+                          onClick={() => setShowEncounters(!showEncounters)}
+                          className="w-full flex items-center justify-between px-1 py-0.5 text-[10px] uppercase font-semibold text-zinc-600 hover:text-zinc-400">
+                          <span>⚔️ Encounter-Presets</span>
+                          {showEncounters ? <ChevronDown className="w-3 h-3" /> : <ChevronRightIcon className="w-3 h-3" />}
+                        </button>
+                        {showEncounters && (
+                          <div className="space-y-1.5">
+                            {/* Save current staging as preset */}
+                            {!showEncounterForm ? (
+                              <button
+                                onClick={() => setShowEncounterForm(true)}
+                                disabled={stagedTokens.length === 0}
+                                className="w-full py-1 rounded border border-zinc-700/60 bg-zinc-800/40 text-[10px] text-zinc-500 hover:text-zinc-300 disabled:opacity-40">
+                                + Bereitstellung speichern
+                              </button>
+                            ) : (
+                              <div className="space-y-1">
+                                <input
+                                  className="w-full bg-zinc-800 border border-zinc-700 rounded px-2 py-1 text-xs text-zinc-100 placeholder-zinc-600 focus:outline-none focus:border-red-700"
+                                  placeholder="Name…"
+                                  value={encName}
+                                  onChange={e => setEncName(e.target.value)}
+                                  onKeyDown={e => { if (e.key === 'Enter') saveEncounter() }}
+                                  autoFocus
+                                />
+                                <div className="flex gap-1">
+                                  <button onClick={saveEncounter}
+                                    className="flex-1 py-1 rounded bg-red-900/40 border border-red-700/50 text-[10px] text-red-200 hover:bg-red-900/60">
+                                    Speichern
+                                  </button>
+                                  <button onClick={() => { setShowEncounterForm(false); setEncName('') }}
+                                    className="px-2 py-1 rounded border border-zinc-700 bg-zinc-800/60 text-[10px] text-zinc-500">
+                                    ✕
+                                  </button>
+                                </div>
+                              </div>
+                            )}
+                            {/* Saved encounters list */}
+                            {encounters.length === 0 && (
+                              <p className="text-[10px] text-zinc-700 italic">Keine Presets gespeichert</p>
+                            )}
+                            {encounters.map(enc => (
+                              <div key={enc.id} className="rounded-lg border border-zinc-700/60 bg-zinc-900/60 p-1.5 space-y-1">
+                                <div className="flex items-center justify-between gap-1">
+                                  <p className="text-[11px] font-semibold text-zinc-200 truncate flex-1">{enc.name}</p>
+                                  <span className="text-[9px] text-zinc-600">{enc.tokens?.length ?? 0} Token</span>
+                                </div>
+                                <button
+                                  onClick={() => loadEncounter(enc)}
+                                  className="w-full py-0.5 rounded bg-amber-900/30 border border-amber-700/50 text-[10px] text-amber-300 hover:bg-amber-900/50">
+                                  Laden
+                                </button>
+                              </div>
+                            ))}
+                          </div>
+                        )}
+                      </div>
+                    )}
                   </div>
                 )}
               </div>

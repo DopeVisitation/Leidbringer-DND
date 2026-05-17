@@ -3,7 +3,7 @@
 import { useEffect, useState } from 'react'
 import Link from 'next/link'
 import { usePathname } from 'next/navigation'
-import { CalendarDays, Shield, Dices, MessageSquare, Swords, Bell } from 'lucide-react'
+import { CalendarDays, Shield, Dices, MessageSquare, Swords, Bell, Users, GitBranch } from 'lucide-react'
 import { cn } from '@/lib/utils'
 import { createClient } from '@/lib/supabase/client'
 import { useAuth } from '@/lib/hooks/useAuth'
@@ -11,6 +11,8 @@ import { useAuth } from '@/lib/hooks/useAuth'
 const navItems = [
   { href: '/dashboard',  label: 'Home',     icon: Shield        },
   { href: '/sessions',   label: 'Sessions', icon: CalendarDays  },
+  { href: '/npcs',       label: 'NPCs',     icon: Users         },
+  { href: '/plot',       label: 'Fäden',    icon: GitBranch     },
   { href: '/dice',       label: 'Würfel',   icon: Dices         },
   { href: '/chat',       label: 'Chat',     icon: MessageSquare },
   { href: '/battlemap',  label: 'Kampf',    icon: Swords        },

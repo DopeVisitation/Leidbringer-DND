@@ -8,7 +8,7 @@ import type { CharacterLink, User, CharacterFullData } from '@/types'
 import {
   Heart, Shield, Eye, ExternalLink, RefreshCw,
   ChevronDown, ChevronRight, Sparkles, RotateCcw, Plus, Minus,
-  BookOpen, Swords, Star,
+  BookOpen, Swords, Star, Zap,
 } from 'lucide-react'
 
 // ── Helpers ────────────────────────────────────────────────────────────────────
@@ -298,12 +298,266 @@ function SpellbookList({ spells }: {
   )
 }
 
+// ── Class Resources ────────────────────────────────────────────────────────────
+interface ClassResource {
+  label: string
+  max: number
+  used: number
+  reset_on: 'long_rest' | 'short_rest' | 'dawn'
+}
+interface ClassResources {
+  [key: string]: ClassResource
+}
+
+const RESET_LABELS: Record<string, string> = {
+  long_rest:  'Lange Rast',
+  short_rest: 'Kurze Rast',
+  dawn:       'Morgengrauen',
+}
+
+const CLASS_RESOURCES: Record<string, Array<{ key: string; label: string; max: number; reset_on: 'long_rest' | 'short_rest' | 'dawn' }>> = {
+  'barbar':     [{ key: 'rage', label: 'Wut', max: 2, reset_on: 'long_rest' }],
+  'barbarian':  [{ key: 'rage', label: 'Wut', max: 2, reset_on: 'long_rest' }],
+  'barde':      [{ key: 'bardic_inspiration', label: 'Bardische Inspiration', max: 3, reset_on: 'long_rest' }],
+  'bard':       [{ key: 'bardic_inspiration', label: 'Bardische Inspiration', max: 3, reset_on: 'long_rest' }],
+  'kleriker':   [{ key: 'channel_divinity', label: 'Göttlicher Kanal', max: 1, reset_on: 'short_rest' }],
+  'cleric':     [{ key: 'channel_divinity', label: 'Göttlicher Kanal', max: 1, reset_on: 'short_rest' }],
+  'druide':     [{ key: 'wild_shape', label: 'Wildgestalt', max: 2, reset_on: 'short_rest' }],
+  'druid':      [{ key: 'wild_shape', label: 'Wildgestalt', max: 2, reset_on: 'short_rest' }],
+  'kämpfer':    [{ key: 'action_surge', label: 'Kampfentschlossenheit', max: 1, reset_on: 'short_rest' }, { key: 'second_wind', label: 'Zweiter Atem', max: 1, reset_on: 'short_rest' }],
+  'fighter':    [{ key: 'action_surge', label: 'Kampfentschlossenheit', max: 1, reset_on: 'short_rest' }, { key: 'second_wind', label: 'Zweiter Atem', max: 1, reset_on: 'short_rest' }],
+  'mönch':      [{ key: 'ki_points', label: 'Ki-Punkte', max: 4, reset_on: 'short_rest' }],
+  'monk':       [{ key: 'ki_points', label: 'Ki-Punkte', max: 4, reset_on: 'short_rest' }],
+  'paladin':    [{ key: 'channel_divinity', label: 'Göttlicher Kanal', max: 1, reset_on: 'short_rest' }, { key: 'lay_on_hands', label: 'Handauflegen', max: 25, reset_on: 'long_rest' }],
+  'zauberer':   [{ key: 'sorcery_points', label: 'Zauberpunkte', max: 3, reset_on: 'long_rest' }],
+  'sorcerer':   [{ key: 'sorcery_points', label: 'Zauberpunkte', max: 3, reset_on: 'long_rest' }],
+}
+
+function getDefaultResources(className: string | null | undefined): ClassResources {
+  if (!className) return {}
+  const key = className.toLowerCase().trim()
+  // Try exact match, then partial
+  const defs = CLASS_RESOURCES[key] ??
+    Object.entries(CLASS_RESOURCES).find(([k]) => key.includes(k))?.[1] ?? null
+  if (!defs) return {}
+  const out: ClassResources = {}
+  for (const d of defs) {
+    out[d.key] = { label: d.label, max: d.max, used: 0, reset_on: d.reset_on }
+  }
+  return out
+}
+
+function ClassResourcesTracker({
+  linkId, resources, className, onUpdate, readonly = false,
+}: {
+  linkId: string
+  resources: ClassResources
+  className?: string | null
+  onUpdate: (r: ClassResources) => void
+  readonly?: boolean
+}) {
+  const supabase = createClient()
+  const [local, setLocal] = useState<ClassResources>(resources)
+  const [editMode, setEditMode] = useState(false)
+  const [open, setOpen] = useState(!readonly)
+
+  useEffect(() => { setLocal(resources) }, [JSON.stringify(resources)]) // eslint-disable-line react-hooks/exhaustive-deps
+
+  const keys = Object.keys(local)
+
+  const save = async (updated: ClassResources) => {
+    await supabase.from('character_links').update({ class_resources: updated }).eq('id', linkId)
+    onUpdate(updated)
+  }
+
+  const togglePip = (key: string, pipIndex: number) => {
+    if (readonly) return
+    const res = local[key]; if (!res) return
+    // Pips fill left to right. Available pips = max - used (filled), used = empty pips on right.
+    // Click fills (use) or empties (restore). pipIndex < available → use; else → restore
+    const available = res.max - res.used
+    const newUsed = pipIndex < available ? res.used + 1 : res.used - 1
+    const updated = { ...local, [key]: { ...res, used: Math.max(0, Math.min(res.max, newUsed)) } }
+    setLocal(updated); save(updated)
+  }
+
+  const resetAll = () => {
+    if (readonly) return
+    const updated: ClassResources = {}
+    for (const [k, v] of Object.entries(local)) updated[k] = { ...v, used: 0 }
+    setLocal(updated); save(updated)
+  }
+
+  const changeMax = (key: string, delta: number) => {
+    const res = local[key]; if (!res) return
+    const newMax = Math.max(0, res.max + delta)
+    const updated = { ...local, [key]: { ...res, max: newMax, used: Math.min(res.used, newMax) } }
+    setLocal(updated); save(updated)
+  }
+
+  const removeResource = (key: string) => {
+    const updated = { ...local }; delete updated[key]
+    setLocal(updated); save(updated)
+  }
+
+  const addResource = () => {
+    const key = `resource_${Date.now()}`
+    const updated = { ...local, [key]: { label: 'Neue Ressource', max: 1, used: 0, reset_on: 'long_rest' as const } }
+    setLocal(updated); save(updated)
+  }
+
+  const updateLabel = (key: string, label: string) => {
+    const res = local[key]; if (!res) return
+    const updated = { ...local, [key]: { ...res, label } }
+    setLocal(updated); save(updated)
+  }
+
+  const updateResetOn = (key: string, reset_on: ClassResource['reset_on']) => {
+    const res = local[key]; if (!res) return
+    const updated = { ...local, [key]: { ...res, reset_on } }
+    setLocal(updated); save(updated)
+  }
+
+  // For GM view: collapsible
+  if (readonly) {
+    return (
+      <div className="space-y-2">
+        <button
+          onClick={() => setOpen(o => !o)}
+          className="flex items-center gap-1.5 w-full text-left"
+        >
+          {open ? <ChevronDown className="w-3.5 h-3.5 text-zinc-500" /> : <ChevronRight className="w-3.5 h-3.5 text-zinc-500" />}
+          <Zap className="w-3.5 h-3.5 text-amber-500" />
+          <span className="text-xs font-semibold text-zinc-400">Klassen-Ressourcen</span>
+          {keys.length === 0 && <span className="text-[11px] text-zinc-600 ml-1">(keine)</span>}
+        </button>
+        {open && keys.length > 0 && (
+          <div className="space-y-1.5 pl-5">
+            {keys.map(key => {
+              const res = local[key]
+              return (
+                <div key={key} className="flex items-center gap-2">
+                  <span className="text-[11px] text-zinc-500 flex-1 truncate">{res.label}</span>
+                  <div className="flex gap-1">
+                    {Array.from({ length: res.max }, (_, i) => (
+                      <div key={i} className={`w-4 h-4 rounded-full border-2 flex-shrink-0 ${
+                        i < res.max - res.used ? 'bg-amber-500 border-amber-400' : 'bg-transparent border-zinc-600'
+                      }`} />
+                    ))}
+                  </div>
+                  <span className="text-[11px] text-zinc-500 w-8 text-right">{res.max - res.used}/{res.max}</span>
+                </div>
+              )
+            })}
+          </div>
+        )}
+      </div>
+    )
+  }
+
+  return (
+    <div className="space-y-2">
+      <div className="flex items-center justify-between">
+        <div className="flex items-center gap-1.5 text-xs text-zinc-400">
+          <Zap className="w-3.5 h-3.5 text-amber-500" />
+          <span className="font-semibold">Klassen-Ressourcen</span>
+        </div>
+        <div className="flex items-center gap-1">
+          {keys.length > 0 && (
+            <button onClick={resetAll} className="flex items-center gap-1 px-2 py-0.5 rounded text-[11px] text-zinc-500 hover:text-amber-300 hover:bg-zinc-800 transition-colors" title="Alle zurücksetzen">
+              <RotateCcw className="w-3 h-3" /> Reset
+            </button>
+          )}
+          <button onClick={() => setEditMode(e => !e)} className={`flex items-center gap-1 px-2 py-0.5 rounded text-[11px] transition-colors ${editMode ? 'text-amber-400 bg-amber-600/20' : 'text-zinc-500 hover:text-zinc-300 hover:bg-zinc-800'}`}>
+            {editMode ? 'Fertig' : 'Bearbeiten'}
+          </button>
+        </div>
+      </div>
+
+      {keys.length === 0 && !editMode && (
+        <p className="text-xs text-zinc-600 py-2 text-center">Keine Klassen-Ressourcen konfiguriert</p>
+      )}
+
+      {keys.map(key => {
+        const res = local[key]
+        const available = res.max - res.used
+        return (
+          <div key={key} className={`space-y-1 ${editMode ? 'bg-zinc-800/40 rounded-lg p-2' : ''}`}>
+            <div className="flex items-center gap-2">
+              {editMode ? (
+                <input
+                  value={res.label}
+                  onChange={e => updateLabel(key, e.target.value)}
+                  className="text-[11px] text-zinc-200 bg-zinc-800 border border-zinc-700 rounded px-1.5 py-0.5 flex-1 focus:outline-none focus:border-amber-500"
+                />
+              ) : (
+                <span className="text-[11px] text-zinc-400 flex-1 truncate">{res.label}</span>
+              )}
+              <div className="flex gap-1">
+                {Array.from({ length: res.max }, (_, i) => (
+                  <button
+                    key={i}
+                    onClick={() => togglePip(key, i)}
+                    title={i < available ? 'Verbrauchen' : 'Wiederherstellen'}
+                    className={`w-5 h-5 rounded-full border-2 transition-all flex-shrink-0 cursor-pointer hover:scale-110 ${
+                      i < available ? 'bg-amber-500 border-amber-400' : 'bg-transparent border-zinc-600'
+                    }`}
+                  />
+                ))}
+              </div>
+              <span className="text-[11px] text-zinc-400 w-10 text-right flex-shrink-0">{available}/{res.max}</span>
+              {editMode && (
+                <div className="flex items-center gap-1">
+                  <button onClick={() => changeMax(key, -1)} className="w-5 h-5 rounded bg-zinc-800 hover:bg-zinc-700 flex items-center justify-center text-zinc-400"><Minus className="w-3 h-3" /></button>
+                  <button onClick={() => changeMax(key, 1)}  className="w-5 h-5 rounded bg-zinc-800 hover:bg-zinc-700 flex items-center justify-center text-zinc-400"><Plus  className="w-3 h-3" /></button>
+                  <button onClick={() => removeResource(key)} className="w-5 h-5 rounded bg-red-900/40 hover:bg-red-900/70 flex items-center justify-center text-red-400 text-[10px]">×</button>
+                </div>
+              )}
+            </div>
+            {editMode && (
+              <div className="flex items-center gap-1.5 mt-1">
+                <span className="text-[10px] text-zinc-600">Reset bei:</span>
+                {(['long_rest', 'short_rest', 'dawn'] as const).map(r => (
+                  <button
+                    key={r}
+                    onClick={() => updateResetOn(key, r)}
+                    className={`text-[10px] px-1.5 py-0.5 rounded border transition-colors ${
+                      res.reset_on === r
+                        ? 'bg-amber-600/20 border-amber-600/50 text-amber-300'
+                        : 'bg-zinc-800 border-zinc-700 text-zinc-500 hover:text-zinc-300'
+                    }`}
+                  >
+                    {RESET_LABELS[r]}
+                  </button>
+                ))}
+              </div>
+            )}
+            {!editMode && (
+              <p className="text-[10px] text-zinc-600">Reset: {RESET_LABELS[res.reset_on]}</p>
+            )}
+          </div>
+        )
+      })}
+
+      {editMode && (
+        <button
+          onClick={addResource}
+          className="flex items-center gap-1 px-2 py-1 rounded text-[11px] text-amber-400 bg-amber-600/10 hover:bg-amber-600/20 border border-amber-600/20 transition-colors"
+        >
+          <Plus className="w-3 h-3" /> Ressource hinzufügen
+        </button>
+      )}
+    </div>
+  )
+}
+
 // ── GM Character Card ──────────────────────────────────────────────────────────
-function GMCharacterCard({ c, onRefresh, onSlotsUpdate, onHpUpdate, onRoll }: {
+function GMCharacterCard({ c, onRefresh, onSlotsUpdate, onHpUpdate, onResourcesUpdate, onRoll }: {
   c: CharacterLink & { user: User }
   onRefresh: (id: string) => void
   onSlotsUpdate: (id: string, slots: SpellSlots) => void
   onHpUpdate: (id: string, hp: number) => void
+  onResourcesUpdate: (id: string, resources: ClassResources) => void
   onRoll: (bonus: number, label: string) => void
 }) {
   const supabase = createClient()
@@ -319,6 +573,14 @@ function GMCharacterCard({ c, onRefresh, onSlotsUpdate, onHpUpdate, onRoll }: {
   const slots: SpellSlots = (c as any).spell_slots ?? {}
   const hasSpellSlots = Object.keys(slots).length > 0
   const hasSpells     = (d?.spells ?? []).length > 0
+
+  // Class resources
+  const rawResources: ClassResources = (c as any).class_resources ?? {}
+  const [localResources, setLocalResources] = useState<ClassResources>(rawResources)
+
+  useEffect(() => {
+    setLocalResources((c as any).class_resources ?? {})
+  }, [(c as any).class_resources]) // eslint-disable-line react-hooks/exhaustive-deps
 
   const passivePerception    = d ? 10 + (d.skills.find(s => s.key === 'perception')?.bonus    ?? 0) : null
   const passiveInsight       = d ? 10 + (d.skills.find(s => s.key === 'insight')?.bonus       ?? 0) : null
@@ -483,6 +745,17 @@ function GMCharacterCard({ c, onRefresh, onSlotsUpdate, onHpUpdate, onRoll }: {
                 />
               </div>
             )}
+
+            {/* Class Resources (read-only for GM) */}
+            <div className="pt-1 border-t border-zinc-800/60">
+              <ClassResourcesTracker
+                linkId={c.id}
+                resources={localResources}
+                className={c.class_name}
+                onUpdate={(r) => { setLocalResources(r); onResourcesUpdate(c.id, r) }}
+                readonly={true}
+              />
+            </div>
           </div>
 
           {/* Expanded details */}
@@ -617,12 +890,15 @@ function GMCharacterCard({ c, onRefresh, onSlotsUpdate, onHpUpdate, onRoll }: {
 
 // ── Player Character Tabs ──────────────────────────────────────────────────────
 function PlayerCharacterTabs({
-  linkId, slots, spells, onSlotsUpdate,
+  linkId, slots, spells, resources, className, onSlotsUpdate, onResourcesUpdate,
 }: {
   linkId: string
   slots: SpellSlots
   spells: Array<{ name: string; level: number; school: string }>
+  resources: ClassResources
+  className?: string | null
   onSlotsUpdate: (s: SpellSlots) => void
+  onResourcesUpdate: (r: ClassResources) => void
 }) {
   const hasSpells = spells.length > 0
   const [tab, setTab] = useState<'schlitze' | 'zauber'>('schlitze')
@@ -633,34 +909,47 @@ function PlayerCharacterTabs({
   ] as const
 
   return (
-    <div className="bg-zinc-900 border border-zinc-800 rounded-xl overflow-hidden">
-      {/* Tab bar */}
-      <div className="flex border-b border-zinc-800">
-        {tabs.map(({ id, label, icon: Icon }) => (
-          <button
-            key={id}
-            onClick={() => setTab(id as typeof tab)}
-            className={`flex-1 flex items-center justify-center gap-1.5 py-2.5 text-xs font-medium transition-colors ${
-              tab === id
-                ? 'text-amber-400 border-b-2 border-amber-500 -mb-px'
-                : 'text-zinc-500 hover:text-zinc-300'
-            }`}
-          >
-            <Icon className="w-3.5 h-3.5" /> {label}
-          </button>
-        ))}
+    <>
+      <div className="bg-zinc-900 border border-zinc-800 rounded-xl overflow-hidden">
+        {/* Tab bar */}
+        <div className="flex border-b border-zinc-800">
+          {tabs.map(({ id, label, icon: Icon }) => (
+            <button
+              key={id}
+              onClick={() => setTab(id as typeof tab)}
+              className={`flex-1 flex items-center justify-center gap-1.5 py-2.5 text-xs font-medium transition-colors ${
+                tab === id
+                  ? 'text-amber-400 border-b-2 border-amber-500 -mb-px'
+                  : 'text-zinc-500 hover:text-zinc-300'
+              }`}
+            >
+              <Icon className="w-3.5 h-3.5" /> {label}
+            </button>
+          ))}
+        </div>
+
+        <div className="px-4 py-3">
+          {tab === 'schlitze' && (
+            <SpellSlotTracker
+              linkId={linkId} slots={slots}
+              onUpdate={onSlotsUpdate} readonly={false}
+            />
+          )}
+          {tab === 'zauber' && <SpellbookList spells={spells} />}
+        </div>
       </div>
 
-      <div className="px-4 py-3">
-        {tab === 'schlitze' && (
-          <SpellSlotTracker
-            linkId={linkId} slots={slots}
-            onUpdate={onSlotsUpdate} readonly={false}
-          />
-        )}
-        {tab === 'zauber' && <SpellbookList spells={spells} />}
+      {/* Class Resources card below spell slots */}
+      <div className="bg-zinc-900 border border-zinc-800 rounded-xl p-4">
+        <ClassResourcesTracker
+          linkId={linkId}
+          resources={resources}
+          className={className}
+          onUpdate={onResourcesUpdate}
+          readonly={false}
+        />
       </div>
-    </div>
+    </>
   )
 }
 
@@ -698,6 +987,18 @@ export default function CharactersPage() {
     fetchAll()
   }, [user, fetchAll])
 
+  // Auto-populate class resources if empty
+  useEffect(() => {
+    if (!character) return
+    const existing: ClassResources = (character as any).class_resources ?? {}
+    if (Object.keys(existing).length > 0) return
+    const defaults = getDefaultResources(character.class_name)
+    if (Object.keys(defaults).length === 0) return
+    // Save defaults
+    supabase.from('character_links').update({ class_resources: defaults }).eq('id', character.id)
+    setCharacter(prev => prev ? { ...prev, class_resources: defaults } as any : prev)
+  }, [character?.id, character?.class_name]) // eslint-disable-line react-hooks/exhaustive-deps
+
   // ── Roll handler ──
   const handleRoll = useCallback(async (bonus: number, label: string) => {
     const d20    = Math.floor(Math.random() * 20) + 1
@@ -726,6 +1027,10 @@ export default function CharactersPage() {
     setAllCharacters(prev => prev.map(c => c.id === linkId ? { ...c, current_hp: hp } as any : c))
   }
 
+  const handleGMResourcesUpdate = (linkId: string, resources: ClassResources) => {
+    setAllCharacters(prev => prev.map(c => c.id === linkId ? { ...c, class_resources: resources } as any : c))
+  }
+
   const handleRefresh = async (linkId: string) => {
     const link = allCharacters.find(c => c.id === linkId)
     if (!link) return
@@ -748,11 +1053,16 @@ export default function CharactersPage() {
     setCharacter(prev => prev ? { ...prev, spell_slots: slots } as any : prev)
   }
 
+  const handlePlayerResourcesUpdate = (resources: ClassResources) => {
+    setCharacter(prev => prev ? { ...prev, class_resources: resources } as any : prev)
+  }
+
   if (!user || loading) return null
 
-  const playerSlots:  SpellSlots  = (character as any)?.spell_slots ?? {}
+  const playerSlots:     SpellSlots   = (character as any)?.spell_slots ?? {}
   const playerSpells: Array<{ name: string; level: number; school: string }> =
     (character?.full_data as CharacterFullData | undefined)?.spells ?? []
+  const playerResources: ClassResources = (character as any)?.class_resources ?? {}
 
   return (
     <div className="p-4 md:p-6 max-w-2xl mx-auto space-y-5">
@@ -783,6 +1093,7 @@ export default function CharactersPage() {
               onRefresh={handleRefresh}
               onSlotsUpdate={handleGMSlotsUpdate}
               onHpUpdate={handleGMHpUpdate}
+              onResourcesUpdate={handleGMResourcesUpdate}
               onRoll={handleRoll}
             />
           ))}
@@ -800,7 +1111,10 @@ export default function CharactersPage() {
               linkId={character.id}
               slots={playerSlots}
               spells={playerSpells}
+              resources={playerResources}
+              className={character.class_name}
               onSlotsUpdate={handlePlayerSlotsUpdate}
+              onResourcesUpdate={handlePlayerResourcesUpdate}
             />
           )}
         </div>
