@@ -150,7 +150,7 @@ function NoteAppendSection({ c, onAppend }: { c: CompanionCharacter; onAppend: (
 
 function CompanionCard({
   c, isGM, userId, onEdit, onDelete, deleteConfirmId, setDeleteConfirmId,
-  onApplyHp, onUseAbility, onDeploy, onRollAction, onRollAbility, onAppendNote,
+  onApplyHp, onUseAbility, onDeploy, onRest, onRollAction, onRollAbility, onAppendNote,
 }: {
   c: CompanionCharacter
   isGM: boolean
@@ -162,6 +162,7 @@ function CompanionCard({
   onApplyHp: (c: CompanionCharacter, delta: number) => void
   onUseAbility: (c: CompanionCharacter, abilityId: string) => void
   onDeploy: (c: CompanionCharacter) => void
+  onRest: (c: CompanionCharacter) => void
   onRollAction: (c: CompanionCharacter, action: CompanionAction, rollType: 'attack' | 'damage') => void
   onRollAbility: (c: CompanionCharacter, ability: Ability) => void
   onAppendNote: (c: CompanionCharacter, text: string) => Promise<void>
@@ -201,6 +202,13 @@ function CompanionCard({
           </div>
           {canEdit && (
             <div className="flex items-center gap-1 flex-shrink-0">
+              <button
+                onClick={() => onRest(c)}
+                className="p-1.5 rounded text-zinc-600 hover:text-blue-400 hover:bg-zinc-700 transition-colors"
+                title="Lange Rast — HP + Ladungen vollständig auffüllen"
+              >
+                🌙
+              </button>
               {isGM && (
                 <button
                   onClick={() => onDeploy(c)}
@@ -772,6 +780,8 @@ export default function ExtrasPage() {
   const [saving, setSaving]                 = useState(false)
   const [deleteConfirmId, setDeleteConfirmId] = useState<string | null>(null)
   const [deploySuccess, setDeploySuccess]   = useState<string | null>(null)
+  const [deployPickerMaps, setDeployPickerMaps] = useState<{id: string, name: string}[]>([])
+  const [deployPickerChar, setDeployPickerChar] = useState<CompanionCharacter | null>(null)
 
   const load = useCallback(async () => {
     if (!user) return
@@ -915,15 +925,10 @@ export default function ExtrasPage() {
     await supabase.from('companion_characters').update({ abilities }).eq('id', c.id)
   }
 
-  const deployToMap = async (c: CompanionCharacter) => {
-    const { data: maps } = await supabase.from('battle_maps').select('id').eq('is_active', true).limit(1)
-    if (!maps?.length) { alert('Kein aktives Spielfeld vorhanden. Bitte erst eine Kampfkarte erstellen.'); return }
-    const mapId = maps[0].id
-    // Determine icon: use image_url if it's a URL or local path, otherwise fall back to type emoji
+  const doDeployToMap = async (c: CompanionCharacter, mapId: string) => {
     const icon = c.image_url && (c.image_url.startsWith('http') || c.image_url.startsWith('/'))
       ? c.image_url
       : TYPE_CONFIG[c.type]?.icon ?? '🐾'
-    // Build notes with abilities text appended
     const abilitiesText = (c.abilities ?? []).length > 0
       ? '\n\nFähigkeiten: ' + c.abilities.map((a: Ability) => a.name + (a.charges_max > 0 ? ` (${a.charges_max}x)` : '')).join(', ')
       : ''
@@ -958,8 +963,32 @@ export default function ExtrasPage() {
       is_staged:        true,
     })
     if (error) { alert(`Fehler beim Bereitstellen: ${error.message}`); return }
+    setDeployPickerChar(null)
+    setDeployPickerMaps([])
     setDeploySuccess(`${c.name} wurde bereitgestellt!`)
     setTimeout(() => setDeploySuccess(null), 3000)
+  }
+
+  const deployToMap = async (c: CompanionCharacter) => {
+    const { data: maps } = await supabase.from('battle_maps').select('id, name').eq('is_active', true)
+    if (!maps?.length) { alert('Kein aktives Spielfeld vorhanden. Bitte erst eine Kampfkarte erstellen.'); return }
+    if (maps.length === 1) {
+      await doDeployToMap(c, maps[0].id)
+    } else {
+      // Multiple active maps → show picker
+      setDeployPickerMaps(maps as {id: string, name: string}[])
+      setDeployPickerChar(c)
+    }
+  }
+
+  const longRest = async (c: CompanionCharacter) => {
+    const abilities = (c.abilities ?? []).map((a: Ability) => ({ ...a, charges_used: 0 }))
+    await supabase.from('companion_characters').update({ current_hp: c.max_hp, abilities }).eq('id', c.id)
+    // Also restore HP on any linked token or placed model
+    if (c.max_hp != null) {
+      await supabase.from('battle_tokens').update({ current_hp: c.max_hp }).eq('companion_id', c.id)
+      await supabase.from('battle_placed_models').update({ current_hp: c.max_hp, abilities }).eq('companion_id', c.id)
+    }
   }
 
   const rollCompanionAction = (c: CompanionCharacter, action: CompanionAction, rollType: 'attack' | 'damage') => {
@@ -1017,6 +1046,36 @@ export default function ExtrasPage() {
       {deploySuccess && (
         <div className="fixed top-4 right-4 z-50 bg-emerald-900 border border-emerald-600/60 text-emerald-200 text-sm font-semibold px-4 py-2.5 rounded-xl shadow-2xl shadow-black/40 animate-fade-in">
           ✅ {deploySuccess}
+        </div>
+      )}
+
+      {/* Deploy Map Picker Modal */}
+      {deployPickerChar && deployPickerMaps.length > 0 && (
+        <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/70 backdrop-blur-sm">
+          <div className="bg-zinc-900 border border-zinc-700 rounded-2xl p-5 w-80 shadow-2xl space-y-3">
+            <div className="flex items-center gap-2">
+              <span className="text-xl">⚔️</span>
+              <p className="font-bold text-zinc-100 flex-1">Auf welches Spielfeld?</p>
+              <button onClick={() => { setDeployPickerChar(null); setDeployPickerMaps([]) }}
+                className="text-zinc-500 hover:text-zinc-300">✕</button>
+            </div>
+            <p className="text-xs text-zinc-500">
+              <span className="text-zinc-300 font-semibold">{deployPickerChar.name}</span> bereitstellen auf:
+            </p>
+            <div className="space-y-2">
+              {deployPickerMaps.map(m => (
+                <button key={m.id}
+                  onClick={() => doDeployToMap(deployPickerChar, m.id)}
+                  className="w-full py-2.5 rounded-lg bg-amber-900/30 border border-amber-700/50 text-sm text-amber-200 hover:bg-amber-900/60 text-left px-3 transition-colors">
+                  🗺 {m.name}
+                </button>
+              ))}
+            </div>
+            <button onClick={() => { setDeployPickerChar(null); setDeployPickerMaps([]) }}
+              className="w-full py-1.5 rounded-lg bg-zinc-800 border border-zinc-700 text-sm text-zinc-500 hover:text-zinc-300">
+              Abbrechen
+            </button>
+          </div>
         </div>
       )}
       {/* Header */}
@@ -1091,6 +1150,7 @@ export default function ExtrasPage() {
               onApplyHp={applyCompanionHp}
               onUseAbility={useAbility}
               onDeploy={deployToMap}
+              onRest={longRest}
               onRollAction={rollCompanionAction}
               onRollAbility={rollAbility}
               onAppendNote={appendNote}

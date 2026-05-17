@@ -982,8 +982,8 @@ export default function BattleMapPage() {
   const [modelImages, setModelImages] = useState<TokenImage[]>([])
   const [modelSearch, setModelSearch] = useState('')
   const [selectedModelImage, setSelectedModelImage] = useState<TokenImage | null>(null)
-  const [modelForm, setModelForm] = useState({ name: '', span: 1, rotation: 0 })
-  const [deployingModelData, setDeployingModelData] = useState<{ image_url: string; name: string; span: number; rotation: number } | null>(null)
+  const [modelForm, setModelForm] = useState({ name: '', span: 1, rotation: 0, max_hp: '', armor_class: '', speed: '', str: '10', dex: '10', con: '10', int: '10', wis: '10', cha: '10', notes: '' })
+  const [deployingModelData, setDeployingModelData] = useState<{ image_url: string; name: string; span: number; rotation: number; max_hp: number|null; armor_class: number|null; speed: number|null; model_stats: Record<string,number>|null; notes: string|null } | null>(null)
   const [selectedModelId, setSelectedModelId] = useState<string | null>(null)
   // Asset picker
   const [showAssetPicker, setShowAssetPicker] = useState(false)
@@ -1464,8 +1464,14 @@ export default function BattleMapPage() {
       rotation: deployingModelData.rotation,
       is_hidden: false,
       z_index: maxZ + 1,
+      max_hp: deployingModelData.max_hp,
+      current_hp: deployingModelData.max_hp,
+      armor_class: deployingModelData.armor_class,
+      speed: deployingModelData.speed,
+      model_stats: deployingModelData.model_stats,
+      notes: deployingModelData.notes,
     }).select().single()
-    if (data) setPlacedModels(prev => [...prev, data as PlacedModel])
+    if (data) setPlacedModels(prev => [...prev, { ...data, conditions: [] } as PlacedModel])
     setDeployingModelData(null)
   }
 
@@ -2498,7 +2504,24 @@ export default function BattleMapPage() {
                     ]
                     return sorted.map(img => (
                       <div key={img.filename} className="relative">
-                        <button onClick={() => setNewMapForm(f => ({ ...f, image_url: img.url, name: f.name || img.name }))}
+                        <button onClick={() => {
+                          // Auto-detect aspect ratio and set grid cols/rows accordingly
+                          const image = new window.Image()
+                          image.onload = () => {
+                            const ratio = image.naturalWidth / image.naturalHeight
+                            const cellSize = parseInt(newMapForm.cell_size) || 50
+                            // Aim for ~1200px wide canvas or use naturalWidth directly
+                            const targetPx = Math.min(image.naturalWidth, 2000)
+                            let cols = Math.round(targetPx / cellSize)
+                            let rows = Math.round(cols / ratio)
+                            // Clamp to reasonable grid sizes
+                            cols = Math.max(8, Math.min(cols, 60))
+                            rows = Math.max(4, Math.min(rows, 60))
+                            setNewMapForm(f => ({ ...f, image_url: img.url, name: f.name || img.name, grid_cols: String(cols), grid_rows: String(rows) }))
+                          }
+                          image.onerror = () => setNewMapForm(f => ({ ...f, image_url: img.url, name: f.name || img.name }))
+                          image.src = img.url
+                        }}
                           title={img.name}
                           className={`w-full relative rounded overflow-hidden border transition-all ${newMapForm.image_url === img.url ? 'border-amber-500' : 'border-zinc-700/60 hover:border-zinc-500'}`}>
                           {/* eslint-disable-next-line @next/next/no-img-element */}
@@ -2663,7 +2686,7 @@ export default function BattleMapPage() {
             <div className="flex items-center gap-2 px-5 py-4 border-b border-zinc-800 flex-shrink-0">
               <span className="text-xl">🐉</span>
               <p className="flex-1 font-bold text-zinc-100">Modell platzieren</p>
-              <button onClick={() => { setShowModelPicker(false); setSelectedModelImage(null) }} className="text-zinc-500 hover:text-zinc-300"><X className="w-5 h-5" /></button>
+              <button onClick={() => { setShowModelPicker(false); setSelectedModelImage(null); setModelForm({ name: '', span: 1, rotation: 0, max_hp: '', armor_class: '', speed: '', str: '10', dex: '10', con: '10', int: '10', wis: '10', cha: '10', notes: '' }) }} className="text-zinc-500 hover:text-zinc-300"><X className="w-5 h-5" /></button>
             </div>
             <div className="overflow-y-auto flex-1 p-4 space-y-3">
               {!selectedModelImage ? (
@@ -2702,12 +2725,12 @@ export default function BattleMapPage() {
                     </div>
                   </div>
                   <div>
-                    <label className="text-[10px] uppercase font-semibold text-zinc-500 block mb-1">Name</label>
+                    <label className="text-[10px] uppercase font-semibold text-zinc-500 block mb-1">Name *</label>
                     <input className="w-full bg-zinc-800 border border-zinc-700 rounded-lg px-3 py-2 text-sm text-zinc-100 focus:outline-none focus:border-red-700"
                       value={modelForm.name} onChange={e => setModelForm(f => ({ ...f, name: e.target.value }))} />
                   </div>
                   <div>
-                    <label className="text-[10px] uppercase font-semibold text-zinc-500 block mb-1">Größe</label>
+                    <label className="text-[10px] uppercase font-semibold text-zinc-500 block mb-1">Größe (Grid-Felder)</label>
                     <select className="w-full bg-zinc-800 border border-zinc-700 rounded-lg px-2 py-2 text-sm text-zinc-100 focus:outline-none focus:border-red-700"
                       value={modelForm.span} onChange={e => setModelForm(f => ({ ...f, span: parseInt(e.target.value) }))}>
                       <option value={1}>Winzig/Klein/Mittel (1×1)</option>
@@ -2718,7 +2741,34 @@ export default function BattleMapPage() {
                     </select>
                   </div>
                   <div>
-                    <label className="text-[10px] uppercase font-semibold text-zinc-500 block mb-2">Rotation</label>
+                    <label className="text-[10px] uppercase font-semibold text-zinc-500 block mb-1">Kampfwerte</label>
+                    <div className="grid grid-cols-3 gap-2">
+                      {([{key:'max_hp',label:'Max HP'},{key:'armor_class',label:'RK'},{key:'speed',label:'Speed ft'}] as const).map(({key,label}) => (
+                        <div key={key}>
+                          <label className="text-[9px] uppercase text-zinc-600 block mb-0.5">{label}</label>
+                          <input type="number" placeholder="—"
+                            className="w-full bg-zinc-800 border border-zinc-700 rounded-lg px-2 py-1.5 text-sm text-zinc-100 text-center focus:outline-none focus:border-red-700"
+                            value={modelForm[key]} onChange={e => setModelForm(f => ({...f,[key]:e.target.value}))} />
+                        </div>
+                      ))}
+                    </div>
+                  </div>
+                  <div>
+                    <label className="text-[10px] uppercase font-semibold text-zinc-500 block mb-1">Attribute</label>
+                    <div className="grid grid-cols-6 gap-1">
+                      {(['str','dex','con','int','wis','cha'] as const).map(ab => (
+                        <div key={ab} className="flex flex-col items-center">
+                          <label className="text-[9px] uppercase text-zinc-600 mb-0.5">{ab.toUpperCase()}</label>
+                          <input type="number" min={1} max={30}
+                            className="w-full bg-zinc-800 border border-zinc-700 rounded py-1.5 text-xs text-zinc-100 text-center focus:outline-none focus:border-red-700"
+                            value={modelForm[ab]} onChange={e => setModelForm(f => ({...f,[ab]:e.target.value}))} />
+                          <span className="text-[8px] text-zinc-600 mt-0.5">{modSign(statMod(parseInt(modelForm[ab])||10))}</span>
+                        </div>
+                      ))}
+                    </div>
+                  </div>
+                  <div>
+                    <label className="text-[10px] uppercase font-semibold text-zinc-500 block mb-1">Rotation</label>
                     <div className="flex gap-2">
                       {[0, 90, 180, 270].map(deg => (
                         <button key={deg} onClick={() => setModelForm(f => ({ ...f, rotation: deg }))}
@@ -2727,6 +2777,12 @@ export default function BattleMapPage() {
                         </button>
                       ))}
                     </div>
+                  </div>
+                  <div>
+                    <label className="text-[10px] uppercase font-semibold text-zinc-500 block mb-1">Notizen</label>
+                    <textarea rows={2} placeholder="Fähigkeiten, Traits…"
+                      className="w-full bg-zinc-800 border border-zinc-700 rounded-lg px-3 py-2 text-sm text-zinc-100 placeholder-zinc-600 focus:outline-none focus:border-red-700 resize-none"
+                      value={modelForm.notes} onChange={e => setModelForm(f => ({...f, notes: e.target.value}))} />
                   </div>
                 </div>
               )}
@@ -2739,7 +2795,11 @@ export default function BattleMapPage() {
                   disabled={!modelForm.name.trim()}
                   onClick={() => {
                     if (!modelForm.name.trim()) return
-                    setDeployingModelData({ image_url: selectedModelImage.url, name: modelForm.name, span: modelForm.span, rotation: modelForm.rotation })
+                    const hp = parseInt(modelForm.max_hp) || null
+                    const ac = parseInt(modelForm.armor_class) || null
+                    const spd = parseInt(modelForm.speed) || null
+                    const stats = { str: parseInt(modelForm.str)||10, dex: parseInt(modelForm.dex)||10, con: parseInt(modelForm.con)||10, int: parseInt(modelForm.int)||10, wis: parseInt(modelForm.wis)||10, cha: parseInt(modelForm.cha)||10 }
+                    setDeployingModelData({ image_url: selectedModelImage.url, name: modelForm.name, span: modelForm.span, rotation: modelForm.rotation, max_hp: hp, armor_class: ac, speed: spd, model_stats: stats, notes: modelForm.notes || null })
                     setShowModelPicker(false); setSelectedModelImage(null)
                   }}
                   className="flex-1 py-2 rounded-lg bg-red-900 hover:bg-red-800 border border-red-700/60 disabled:opacity-40 text-sm font-bold text-zinc-100">
