@@ -4,6 +4,7 @@ import { useState, useEffect, useCallback } from 'react'
 import { Plus, Search, X, Pencil, Trash2, PawPrint, Heart, Shield, Zap, Swords } from 'lucide-react'
 import { createClient } from '@/lib/supabase/client'
 import { useAuth } from '@/lib/hooks/useAuth'
+import { MiniDicePanel } from '@/components/shared/MiniDicePanel'
 
 type CompanionType = 'pet' | 'summon' | 'familiar' | 'npc' | 'mount'
 
@@ -1092,6 +1093,9 @@ export default function ExtrasPage() {
           Erstellen
         </button>
       </div>
+
+      {/* Mini Dice Panel */}
+      <MiniDicePanel title="🎲 Würfelwurf" />
 
       {/* Search + Filter */}
       <div className="flex gap-2 flex-col sm:flex-row">

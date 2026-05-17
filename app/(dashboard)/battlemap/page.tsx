@@ -2286,7 +2286,7 @@ export default function BattleMapPage() {
   }
 
   // ── Roll ──
-  const performRoll = async (cfg: DiceConfig[], mod: number, lbl: string) => {
+  const performRoll = async (cfg: DiceConfig[], mod: number, lbl: string, actorName?: string) => {
     if (!user || cfg.length === 0) return
     const results = cfg.map(c => Array.from({ length: c.count }, () => rollDie(parseSides(c.type))))
     const total = results.flat().reduce((s, n) => s + n, 0) + mod
@@ -2294,6 +2294,14 @@ export default function BattleMapPage() {
       user_id: user.id, dice_config: cfg, results, total,
       label: lbl || null, visible_to_players: isGM ? gmRollsVisible : true,
     })
+    // Also log to combat log if a map is active
+    if (activeMap) {
+      const actor = actorName ?? (sel?.name ?? user.email?.split('@')[0] ?? 'Unbekannt')
+      const diceStr = cfg.map(c => `${c.count}${c.type}`).join('+')
+      const modStr = mod !== 0 ? (mod > 0 ? `+${mod}` : `${mod}`) : ''
+      const desc = `${lbl || 'Wurf'}: ${diceStr}${modStr} → **${total}** [${results.flat().join(', ')}]`
+      await addLogEntry(activeMap.id, actor, 'roll', desc, isGM)
+    }
   }
 
   const sel = selectedToken ? tokens.find(t => t.id === selectedToken) ?? null : null
@@ -2513,12 +2521,12 @@ export default function BattleMapPage() {
             </div>
           )}
 
-          {/* Quick Dice button — visible for everyone */}
+          {/* Quick Dice button — visible for everyone, toggles the Würfelwand overlay */}
           {activeMap && (
             <button
-              onClick={() => { setShowQuickDice(v => !v); setQuickDiceResult(null) }}
-              className={`flex items-center gap-1 px-2 py-1.5 rounded border text-xs transition-colors ${showQuickDice ? 'bg-amber-900/40 border-amber-700/60 text-amber-300' : 'bg-zinc-800/80 border-zinc-700/60 text-zinc-400 hover:text-zinc-200'}`}
-              title="Würfelwurf">
+              onClick={() => setShowDiceWall(v => !v)}
+              className={`flex items-center gap-1 px-2 py-1.5 rounded border text-xs transition-colors ${showDiceWall ? 'bg-amber-900/40 border-amber-700/60 text-amber-300' : 'bg-zinc-800/80 border-zinc-700/60 text-zinc-400 hover:text-zinc-200'}`}
+              title="Würfelwand öffnen/schließen">
               <Dices className="w-3 h-3" /> Würfeln
             </button>
           )}
@@ -2581,81 +2589,7 @@ export default function BattleMapPage() {
         </div>
       )}
 
-      {/* ── Quick Dice Panel ── */}
-      {showQuickDice && activeMap && (
-        <div className="flex-shrink-0 px-4 py-3 bg-zinc-900/90 border-b border-amber-900/40 flex flex-wrap items-center gap-3">
-          <Dices className="w-4 h-4 text-amber-400 flex-shrink-0" />
-          <span className="text-xs font-semibold text-amber-300">Würfelwurf</span>
-          {/* Count */}
-          <div className="flex items-center gap-1">
-            <label className="text-[10px] text-zinc-500">Anzahl</label>
-            <input type="number" min={1} max={20} value={quickDiceCfg.count}
-              onChange={e => setQuickDiceCfg(c => ({ ...c, count: Math.max(1, parseInt(e.target.value) || 1) }))}
-              className="w-12 bg-zinc-800 border border-zinc-700 rounded px-1.5 py-1 text-xs text-zinc-100 text-center focus:outline-none" />
-          </div>
-          {/* Dice type */}
-          <div className="flex gap-1">
-            {(['d4','d6','d8','d10','d12','d20'] as const).map(d => (
-              <button key={d} onClick={() => setQuickDiceCfg(c => ({ ...c, type: d }))}
-                className={`px-2 py-1 rounded text-[11px] font-bold border transition-colors ${quickDiceCfg.type === d ? 'bg-amber-700 border-amber-600 text-amber-100' : 'bg-zinc-800 border-zinc-700 text-zinc-400 hover:text-zinc-200'}`}>
-                {d}
-              </button>
-            ))}
-          </div>
-          {/* Damage type */}
-          <select value={quickDiceCfg.damageType} onChange={e => setQuickDiceCfg(c => ({ ...c, damageType: e.target.value }))}
-            className="bg-zinc-800 border border-zinc-700 rounded px-2 py-1 text-xs text-zinc-300 focus:outline-none">
-            {DMG_TYPES_LIST.map(t => <option key={t} value={t}>{t === '' ? '— Schadensart —' : t}</option>)}
-          </select>
-          {/* Modifier */}
-          <div className="flex items-center gap-1">
-            <label className="text-[10px] text-zinc-500">Mod</label>
-            <input type="number" value={quickDiceCfg.modifier}
-              onChange={e => setQuickDiceCfg(c => ({ ...c, modifier: parseInt(e.target.value) || 0 }))}
-              className="w-14 bg-zinc-800 border border-zinc-700 rounded px-1.5 py-1 text-xs text-zinc-100 text-center focus:outline-none" />
-          </div>
-          {/* GM: visibility toggle */}
-          {isGM && (
-            <button onClick={() => setGmRollsVisible(v => !v)}
-              className={`px-2 py-1 rounded text-[10px] border transition-colors ${gmRollsVisible ? 'bg-emerald-900/30 border-emerald-700/50 text-emerald-300' : 'bg-zinc-800 border-zinc-700 text-zinc-500'}`}
-              title="Würfe für Spieler sichtbar?">
-              {gmRollsVisible ? '👁 Sichtbar' : '🙈 Versteckt'}
-            </button>
-          )}
-          {/* Roll button */}
-          <button
-            onClick={async () => {
-              const sides = parseInt(quickDiceCfg.type.slice(1))
-              const rolls = Array.from({ length: quickDiceCfg.count }, () => Math.floor(Math.random() * sides) + 1)
-              const total = rolls.reduce((s, n) => s + n, 0) + quickDiceCfg.modifier
-              const dmgLabel = quickDiceCfg.damageType ? ` (${quickDiceCfg.damageType})` : ''
-              const lbl = `${quickDiceCfg.count}${quickDiceCfg.type}${quickDiceCfg.modifier !== 0 ? (quickDiceCfg.modifier > 0 ? `+${quickDiceCfg.modifier}` : quickDiceCfg.modifier) : ''}${dmgLabel}`
-              setQuickDiceResult({ rolls, total, label: lbl })
-              if (user) {
-                await supabase.from('dice_rolls').insert({
-                  user_id: user.id,
-                  dice_config: [{ type: quickDiceCfg.type, count: quickDiceCfg.count, damageType: quickDiceCfg.damageType || undefined }],
-                  results: [rolls],
-                  total,
-                  label: lbl,
-                  visible_to_players: isGM ? gmRollsVisible : true,
-                })
-              }
-            }}
-            className="px-3 py-1.5 rounded bg-amber-700 hover:bg-amber-600 text-xs font-bold text-white">
-            🎲 Würfeln
-          </button>
-          {/* Result display */}
-          {quickDiceResult && (
-            <div className="flex items-center gap-2 px-3 py-1.5 rounded-lg bg-zinc-800 border border-amber-700/40">
-              <span className="text-[10px] text-zinc-500">{quickDiceResult.label}:</span>
-              <span className="text-xs text-zinc-400">[{quickDiceResult.rolls.join(', ')}]</span>
-              {quickDiceCfg.modifier !== 0 && <span className="text-xs text-zinc-500">{quickDiceCfg.modifier > 0 ? '+' : ''}{quickDiceCfg.modifier}</span>}
-              <span className="text-base font-black text-amber-400">{quickDiceResult.total}</span>
-            </div>
-          )}
-        </div>
-      )}
+      {/* Quick Dice Panel removed — controls now integrated into the Würfelwand overlay */}
 
       {/* ── Fog Controls (when fog mode active) ── */}
       {fogMode && isGM && activeMap && (
@@ -4361,20 +4295,77 @@ export default function BattleMapPage() {
                 )}
               </div>
 
-              {/* ── V19: Dice Wall – redesigned glassmorphism overlay ── */}
-              {filteredDiceWall.length > 0 && (
+              {/* ── Würfelwand + Quick Dice — collapsible overlay ── */}
+              {activeMap && (
                 <div className="absolute bottom-3 left-3 z-20 flex flex-col items-start gap-1.5 pointer-events-auto">
+                  {/* Toggle button */}
                   <button
-                    onClick={() => setShowDiceWall(!showDiceWall)}
-                    className="flex items-center gap-1.5 px-3 py-1.5 rounded-full bg-black/60 backdrop-blur-md border border-white/10 text-zinc-300 text-[11px] font-semibold hover:bg-black/80 hover:border-white/20 transition-all shadow-lg">
+                    onClick={() => setShowDiceWall(v => !v)}
+                    className="flex items-center gap-1.5 px-3 py-1.5 rounded-full bg-black/70 backdrop-blur-md border border-white/15 text-zinc-300 text-[11px] font-semibold hover:bg-black/90 hover:border-white/25 transition-all shadow-lg">
                     <span className="text-base leading-none">🎲</span>
                     <span>Würfelwand</span>
                     <span className="ml-1 opacity-60">{showDiceWall ? '▾' : '▸'}</span>
                   </button>
                   {showDiceWall && (
-                    <div className="bg-black/55 backdrop-blur-xl border border-white/10 rounded-2xl shadow-2xl shadow-black/60 overflow-hidden min-w-[200px] max-w-[240px]">
-                      {filteredDiceWall.slice(0, 6).map((r, i) => {
-                        // Krit/Patzer NUR bei echtem d20-Einzelwurf (nicht bei Schadenswürfeln)
+                    <div className="bg-black/70 backdrop-blur-xl border border-white/10 rounded-2xl shadow-2xl shadow-black/60 overflow-hidden w-64">
+                      {/* ── Dice Controls ── */}
+                      <div className="px-3 pt-3 pb-2 border-b border-white/10 space-y-2">
+                        {/* Dice type buttons */}
+                        <div className="flex gap-1 flex-wrap">
+                          {(['d4','d6','d8','d10','d12','d20'] as const).map(d => (
+                            <button key={d} onClick={() => setQuickDiceCfg(c => ({ ...c, type: d }))}
+                              className={`px-2 py-1 rounded text-[11px] font-bold border transition-colors ${quickDiceCfg.type === d ? 'bg-amber-700 border-amber-600 text-amber-100' : 'bg-white/5 border-white/10 text-zinc-400 hover:text-zinc-200 hover:border-white/20'}`}>
+                              {d}
+                            </button>
+                          ))}
+                        </div>
+                        {/* Count + Modifier row */}
+                        <div className="flex gap-2 items-center">
+                          <div className="flex items-center gap-1">
+                            <span className="text-[10px] text-zinc-500">×</span>
+                            <input type="number" min={1} max={20} value={quickDiceCfg.count}
+                              onChange={e => setQuickDiceCfg(c => ({ ...c, count: Math.max(1, parseInt(e.target.value) || 1) }))}
+                              className="w-10 bg-white/5 border border-white/10 rounded px-1 py-0.5 text-xs text-zinc-100 text-center focus:outline-none focus:border-amber-500/50" />
+                          </div>
+                          <div className="flex items-center gap-1">
+                            <span className="text-[10px] text-zinc-500">Mod</span>
+                            <input type="number" value={quickDiceCfg.modifier}
+                              onChange={e => setQuickDiceCfg(c => ({ ...c, modifier: parseInt(e.target.value) || 0 }))}
+                              className="w-14 bg-white/5 border border-white/10 rounded px-1 py-0.5 text-xs text-zinc-100 text-center focus:outline-none focus:border-amber-500/50" />
+                          </div>
+                          {isGM && (
+                            <button onClick={() => setGmRollsVisible(v => !v)}
+                              className={`ml-auto px-1.5 py-0.5 rounded text-[9px] border transition-colors ${gmRollsVisible ? 'bg-emerald-900/40 border-emerald-700/50 text-emerald-300' : 'bg-white/5 border-white/10 text-zinc-500'}`}
+                              title="Für Spieler sichtbar?">
+                              {gmRollsVisible ? '👁' : '🙈'}
+                            </button>
+                          )}
+                        </div>
+                        {/* Damage type */}
+                        <select value={quickDiceCfg.damageType}
+                          onChange={e => setQuickDiceCfg(c => ({ ...c, damageType: e.target.value }))}
+                          className="w-full bg-white/5 border border-white/10 rounded px-2 py-1 text-xs text-zinc-300 focus:outline-none focus:border-amber-500/50">
+                          {DMG_TYPES_LIST.map(t => <option key={t} value={t}>{t === '' ? '— Schadensart (optional) —' : t}</option>)}
+                        </select>
+                        {/* Roll button */}
+                        <button
+                          onClick={async () => {
+                            const dmgLabel = quickDiceCfg.damageType ? ` (${quickDiceCfg.damageType})` : ''
+                            const mod = quickDiceCfg.modifier
+                            const modStr = mod !== 0 ? (mod > 0 ? `+${mod}` : `${mod}`) : ''
+                            const lbl = `${quickDiceCfg.count}${quickDiceCfg.type}${modStr}${dmgLabel}`
+                            await performRoll(
+                              [{ type: quickDiceCfg.type, count: quickDiceCfg.count, damageType: quickDiceCfg.damageType || undefined }],
+                              mod,
+                              lbl
+                            )
+                          }}
+                          className="w-full py-1.5 rounded-lg bg-amber-700 hover:bg-amber-600 text-xs font-bold text-white transition-colors">
+                          🎲 Würfeln
+                        </button>
+                      </div>
+                      {/* ── Roll History ── */}
+                      {filteredDiceWall.length > 0 && filteredDiceWall.slice(0, 8).map((r, i) => {
                         const isSingleD20 = r.dice_config?.length === 1 && r.dice_config[0].type === 'd20' && r.dice_config[0].count === 1
                         const allRolls = r.results?.flat() ?? []
                         const hasNat20 = isSingleD20 && allRolls.includes(20)
@@ -4385,24 +4376,21 @@ export default function BattleMapPage() {
                             className={`flex items-center gap-3 px-3 py-2 border-b border-white/5 last:border-0 ${
                               hasNat20 ? 'bg-amber-500/10' : hasNat1 ? 'bg-red-900/20' : i === 0 ? 'bg-white/5' : ''
                             }`}>
-                            {/* Left: label + dice */}
                             <div className="flex-1 min-w-0">
-                              <p className="text-[10px] font-semibold text-zinc-200 truncate leading-tight">
-                                {r.label ?? 'Wurf'}
-                              </p>
+                              <p className="text-[10px] font-semibold text-zinc-200 truncate leading-tight">{r.label ?? 'Wurf'}</p>
                               <p className="text-[9px] text-zinc-500 font-mono leading-tight">{diceLabel}</p>
                             </div>
-                            {/* Right: total + badge */}
                             <div className="flex items-center gap-1.5 flex-shrink-0">
                               {hasNat20 && <span className="text-[9px] font-bold text-amber-400 bg-amber-900/40 rounded px-1">KRIT</span>}
                               {hasNat1  && <span className="text-[9px] font-bold text-red-400 bg-red-900/40 rounded px-1">PATZER</span>}
-                              <span className={`text-lg font-black tabular-nums leading-none ${
-                                hasNat20 ? 'text-amber-300' : hasNat1 ? 'text-red-400' : 'text-white'
-                              }`}>{r.total}</span>
+                              <span className={`text-lg font-black tabular-nums leading-none ${hasNat20 ? 'text-amber-300' : hasNat1 ? 'text-red-400' : 'text-white'}`}>{r.total}</span>
                             </div>
                           </div>
                         )
                       })}
+                      {filteredDiceWall.length === 0 && (
+                        <p className="text-center text-[10px] text-zinc-600 py-3">Noch keine Würfe</p>
+                      )}
                     </div>
                   )}
                 </div>

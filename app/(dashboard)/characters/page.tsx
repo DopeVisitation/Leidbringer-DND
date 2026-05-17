@@ -3,6 +3,7 @@
 import { useState, useEffect, useCallback, useRef } from 'react'
 import { useAuth } from '@/lib/hooks/useAuth'
 import { CharacterLinkCard } from '@/components/characters/CharacterLink'
+import { MiniDicePanel } from '@/components/shared/MiniDicePanel'
 import { createClient } from '@/lib/supabase/client'
 import type { CharacterLink, User, CharacterFullData } from '@/types'
 import {
@@ -1077,6 +1078,9 @@ export default function CharactersPage() {
           {isGM ? 'Gruppenübersicht aller Charaktere' : 'Dein DnD Beyond Charakter'}
         </p>
       </div>
+
+      {/* Mini Dice Panel — accessible to everyone */}
+      <MiniDicePanel title="🎲 Würfelwurf" />
 
       {isGM ? (
         <div className="space-y-4">
