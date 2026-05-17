@@ -19,7 +19,11 @@ export async function GET(req: NextRequest) {
       .filter(f => /\.(png|jpg|jpeg|webp|gif)$/i.test(f))
       .sort()
       .map(f => ({
-        name: f.replace(/\s+S\.(png|jpg|jpeg)$/i, '').replace(/\s+\.(png|jpg|jpeg)$/i, ''),
+        name: f
+          .replace(/\s+S\.(png|jpg|jpeg|webp)$/i, '')   // remove " S.png" creature suffix
+          .replace(/\.(png|jpg|jpeg|webp)$/i, '')        // remove extension
+          .replace(/\s*\(DnDavid\)\s*$/i, '')           // remove "(DnDavid)" credit
+          .trim(),
         url: `/tokens/${category}/${encodeURIComponent(f)}`,
         filename: f,
       }))
