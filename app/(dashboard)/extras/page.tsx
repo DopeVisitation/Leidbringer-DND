@@ -1,11 +1,28 @@
 'use client'
 
 import { useState, useEffect, useCallback } from 'react'
-import { Plus, Search, X, Pencil, Trash2, PawPrint, Heart, Shield, Zap } from 'lucide-react'
+import { Plus, Search, X, Pencil, Trash2, PawPrint, Heart, Shield, Zap, Swords } from 'lucide-react'
 import { createClient } from '@/lib/supabase/client'
 import { useAuth } from '@/lib/hooks/useAuth'
 
 type CompanionType = 'pet' | 'summon' | 'familiar' | 'npc' | 'mount'
+
+interface Ability {
+  id: string
+  name: string
+  description: string
+  charges_max: number
+  charges_used: number
+  damage_formula: string
+  save_type: string
+  save_dc: number
+}
+
+interface FavDice {
+  id: string
+  name: string
+  dice: string
+}
 
 interface CompanionCharacter {
   id: string
@@ -13,6 +30,7 @@ interface CompanionCharacter {
   type: CompanionType
   image_url: string | null
   max_hp: number | null
+  current_hp: number | null
   armor_class: number | null
   speed: number | null
   str: number | null
@@ -24,6 +42,8 @@ interface CompanionCharacter {
   notes: string | null
   owner_id: string | null
   created_by: string | null
+  favorite_dice: FavDice[]
+  abilities: Ability[]
 }
 
 const TYPE_CONFIG: Record<CompanionType, { label: string; color: string; bg: string; icon: string }> = {
@@ -36,6 +56,7 @@ const TYPE_CONFIG: Record<CompanionType, { label: string; color: string; bg: str
 
 const STAT_ABBR = ['STR', 'DEX', 'CON', 'INT', 'WIS', 'CHA'] as const
 const STAT_KEYS = ['str', 'dex', 'con', 'int', 'wis', 'cha'] as const
+const SAVE_TYPES = ['', 'STR', 'DEX', 'CON', 'INT', 'WIS', 'CHA'] as const
 
 function statMod(v: number | null) {
   if (v == null) return null
@@ -48,6 +69,7 @@ const EMPTY_FORM = {
   type: 'pet' as CompanionType,
   image_url: '',
   max_hp: '',
+  current_hp: '',
   armor_class: '',
   speed: '',
   str: '', dex: '', con: '', int: '', wis: '', cha: '',
@@ -56,8 +78,19 @@ const EMPTY_FORM = {
 
 type FormState = typeof EMPTY_FORM
 
+function HpBar({ current, max }: { current: number; max: number }) {
+  const pct = max > 0 ? Math.max(0, Math.min(100, (current / max) * 100)) : 0
+  const color = pct > 60 ? 'bg-emerald-500' : pct > 30 ? 'bg-amber-500' : 'bg-red-500'
+  return (
+    <div className="w-full h-1.5 bg-zinc-700 rounded-full overflow-hidden mt-1">
+      <div className={`h-full ${color} transition-all`} style={{ width: `${pct}%` }} />
+    </div>
+  )
+}
+
 function CompanionCard({
   c, isGM, userId, onEdit, onDelete, deleteConfirmId, setDeleteConfirmId,
+  onApplyHp, onUseAbility, onDeploy,
 }: {
   c: CompanionCharacter
   isGM: boolean
@@ -66,9 +99,14 @@ function CompanionCard({
   onDelete: (id: string) => void
   deleteConfirmId: string | null
   setDeleteConfirmId: (id: string | null) => void
+  onApplyHp: (c: CompanionCharacter, delta: number) => void
+  onUseAbility: (c: CompanionCharacter, abilityId: string) => void
+  onDeploy: (c: CompanionCharacter) => void
 }) {
   const cfg = TYPE_CONFIG[c.type] ?? TYPE_CONFIG.npc
   const canEdit = isGM || c.created_by === userId
+  const maxHp = c.max_hp ?? 0
+  const curHp = c.current_hp ?? maxHp
 
   return (
     <div className="bg-zinc-900 border border-zinc-800 rounded-xl overflow-hidden flex flex-col hover:border-zinc-700 transition-colors">
@@ -100,6 +138,15 @@ function CompanionCard({
           </div>
           {canEdit && (
             <div className="flex items-center gap-1 flex-shrink-0">
+              {isGM && (
+                <button
+                  onClick={() => onDeploy(c)}
+                  className="p-1.5 rounded text-zinc-600 hover:text-amber-400 hover:bg-zinc-700 transition-colors"
+                  title="Auf Spielfeld bereitstellen"
+                >
+                  <Swords className="w-3.5 h-3.5" />
+                </button>
+              )}
               <button
                 onClick={() => onEdit(c)}
                 className="p-1.5 rounded text-zinc-600 hover:text-zinc-300 hover:bg-zinc-700 transition-colors"
@@ -125,14 +172,32 @@ function CompanionCard({
           )}
         </div>
 
+        {/* HP with +/- */}
+        {c.max_hp != null && (
+          <div>
+            <div className="flex items-center gap-2">
+              <Heart className="w-3 h-3 text-red-400 flex-shrink-0" />
+              <span className="text-xs text-zinc-400 flex-1">
+                <span className="font-bold text-zinc-200">{curHp}</span>
+                <span className="text-zinc-600"> / {maxHp}</span> HP
+              </span>
+              <div className="flex items-center gap-1">
+                <button
+                  onClick={() => onApplyHp(c, -1)}
+                  className="w-5 h-5 rounded bg-zinc-800 border border-zinc-700 text-xs text-zinc-400 hover:text-zinc-200 hover:bg-zinc-700 flex items-center justify-center"
+                >−</button>
+                <button
+                  onClick={() => onApplyHp(c, 1)}
+                  className="w-5 h-5 rounded bg-zinc-800 border border-zinc-700 text-xs text-zinc-400 hover:text-zinc-200 hover:bg-zinc-700 flex items-center justify-center"
+                >+</button>
+              </div>
+            </div>
+            <HpBar current={curHp} max={maxHp} />
+          </div>
+        )}
+
         {/* Combat stats */}
         <div className="flex gap-3 flex-wrap text-xs">
-          {c.max_hp != null && (
-            <div className="flex items-center gap-1 text-zinc-400">
-              <Heart className="w-3 h-3 text-red-400" />
-              <span className="font-semibold text-zinc-200">{c.max_hp}</span> HP
-            </div>
-          )}
           {c.armor_class != null && (
             <div className="flex items-center gap-1 text-zinc-400">
               <Shield className="w-3 h-3 text-zinc-400" />
@@ -160,6 +225,51 @@ function CompanionCard({
           </div>
         )}
 
+        {/* Abilities */}
+        {c.abilities && c.abilities.length > 0 && (
+          <div className="flex flex-wrap gap-1.5">
+            {c.abilities.map((a) => {
+              const hasCharges = a.charges_max > 0
+              const exhausted = hasCharges && a.charges_used >= a.charges_max
+              return (
+                <button
+                  key={a.id}
+                  onClick={() => !exhausted && onUseAbility(c, a.id)}
+                  disabled={exhausted}
+                  title={a.description || a.name}
+                  className={`flex items-center gap-1 px-2 py-1 rounded text-[10px] font-semibold border transition-colors ${
+                    exhausted
+                      ? 'border-zinc-700 text-zinc-600 bg-zinc-800/40 cursor-not-allowed'
+                      : 'border-amber-700/60 text-amber-300 bg-amber-950/30 hover:bg-amber-950/60'
+                  }`}
+                >
+                  <span>{a.name}</span>
+                  {hasCharges && (
+                    <span className="flex gap-0.5 ml-0.5">
+                      {Array.from({ length: a.charges_max }).map((_, i) => (
+                        <span key={i} className={i < a.charges_used ? 'text-zinc-600' : 'text-amber-400'}>
+                          {i < a.charges_used ? '○' : '●'}
+                        </span>
+                      ))}
+                    </span>
+                  )}
+                </button>
+              )
+            })}
+          </div>
+        )}
+
+        {/* Würfelfavoriten */}
+        {c.favorite_dice && c.favorite_dice.length > 0 && (
+          <div className="flex flex-wrap gap-1">
+            {c.favorite_dice.map((d) => (
+              <span key={d.id} className="px-2 py-0.5 rounded bg-zinc-800 border border-zinc-700 text-[10px] text-zinc-300" title={d.name}>
+                🎲 {d.dice}
+              </span>
+            ))}
+          </div>
+        )}
+
         {/* Notes */}
         {c.notes && (
           <p className="text-xs text-zinc-400 whitespace-pre-wrap line-clamp-3">{c.notes}</p>
@@ -176,6 +286,10 @@ function CompanionForm({
   onCancel,
   saving,
   isEdit,
+  formDice,
+  setFormDice,
+  formAbilities,
+  setFormAbilities,
 }: {
   form: FormState
   setForm: React.Dispatch<React.SetStateAction<FormState>>
@@ -183,6 +297,10 @@ function CompanionForm({
   onCancel: () => void
   saving: boolean
   isEdit: boolean
+  formDice: FavDice[]
+  setFormDice: (d: FavDice[]) => void
+  formAbilities: Ability[]
+  setFormAbilities: (a: Ability[]) => void
 }) {
   const numField = (key: keyof FormState) => (
     <input
@@ -193,6 +311,23 @@ function CompanionForm({
       className="w-full bg-zinc-800 border border-zinc-700 rounded-lg px-3 py-2 text-sm text-zinc-100 placeholder-zinc-500 focus:outline-none focus:border-amber-500"
     />
   )
+
+  const addDice = () => {
+    setFormDice([...formDice, { id: crypto.randomUUID(), name: '', dice: '' }])
+  }
+  const removeDice = (id: string) => setFormDice(formDice.filter(d => d.id !== id))
+  const updateDice = (id: string, field: keyof FavDice, value: string) =>
+    setFormDice(formDice.map(d => d.id === id ? { ...d, [field]: value } : d))
+
+  const addAbility = () => {
+    setFormAbilities([...formAbilities, {
+      id: crypto.randomUUID(), name: '', description: '',
+      charges_max: 0, charges_used: 0, damage_formula: '', save_type: '', save_dc: 0,
+    }])
+  }
+  const removeAbility = (id: string) => setFormAbilities(formAbilities.filter(a => a.id !== id))
+  const updateAbility = (id: string, field: keyof Ability, value: string | number) =>
+    setFormAbilities(formAbilities.map(a => a.id === id ? { ...a, [field]: value } : a))
 
   return (
     <form onSubmit={onSubmit} className="p-5 space-y-4">
@@ -273,14 +408,134 @@ function CompanionForm({
 
       {/* Notes */}
       <div>
-        <label className="block text-xs font-medium text-zinc-400 mb-1.5">Notizen</label>
+        <label className="block text-xs font-medium text-zinc-400 mb-1.5">Actions / Fähigkeiten</label>
         <textarea
-          rows={3}
-          placeholder="Beschreibung, Fähigkeiten, Hintergrund…"
+          rows={8}
+          placeholder="Beschreibung, Hintergrund, Angriffsbeschreibungen…"
           value={form.notes}
           onChange={(e) => setForm(p => ({ ...p, notes: e.target.value }))}
-          className="w-full bg-zinc-800 border border-zinc-700 rounded-lg px-3 py-2 text-sm text-zinc-100 placeholder-zinc-500 focus:outline-none focus:border-amber-500 resize-none"
+          className="w-full bg-zinc-800 border border-zinc-700 rounded-lg px-3 py-2 text-sm text-zinc-100 placeholder-zinc-500 focus:outline-none focus:border-amber-500 resize-y min-h-[140px]"
         />
+      </div>
+
+      {/* Würfelfavoriten */}
+      <div>
+        <div className="flex items-center justify-between mb-2">
+          <label className="text-xs font-medium text-zinc-400">Würfelfavoriten</label>
+          <button type="button" onClick={addDice}
+            className="text-[10px] px-2 py-1 rounded bg-zinc-800 border border-zinc-700 text-zinc-400 hover:text-zinc-200 hover:border-zinc-500">
+            + Hinzufügen
+          </button>
+        </div>
+        <div className="space-y-2">
+          {formDice.map(d => (
+            <div key={d.id} className="flex gap-2 items-center">
+              <input
+                type="text"
+                placeholder="Name"
+                value={d.name}
+                onChange={e => updateDice(d.id, 'name', e.target.value)}
+                className="flex-1 bg-zinc-800 border border-zinc-700 rounded px-2 py-1 text-xs text-zinc-100 placeholder-zinc-600 focus:outline-none focus:border-amber-500"
+              />
+              <input
+                type="text"
+                placeholder="2d6+3"
+                value={d.dice}
+                onChange={e => updateDice(d.id, 'dice', e.target.value)}
+                className="w-24 bg-zinc-800 border border-zinc-700 rounded px-2 py-1 text-xs text-zinc-100 placeholder-zinc-600 focus:outline-none focus:border-amber-500"
+              />
+              <button type="button" onClick={() => removeDice(d.id)}
+                className="p-1 text-zinc-600 hover:text-red-400">
+                <X className="w-3.5 h-3.5" />
+              </button>
+            </div>
+          ))}
+        </div>
+      </div>
+
+      {/* Aktionen / Fähigkeiten */}
+      <div>
+        <div className="flex items-center justify-between mb-2">
+          <label className="text-xs font-medium text-zinc-400">Aktionen / Fähigkeiten</label>
+          <button type="button" onClick={addAbility}
+            className="text-[10px] px-2 py-1 rounded bg-zinc-800 border border-zinc-700 text-zinc-400 hover:text-zinc-200 hover:border-zinc-500">
+            + Hinzufügen
+          </button>
+        </div>
+        <div className="space-y-3">
+          {formAbilities.map(a => (
+            <div key={a.id} className="bg-zinc-800/50 border border-zinc-700/60 rounded-lg p-3 space-y-2">
+              <div className="flex gap-2 items-center">
+                <input
+                  type="text"
+                  required={formAbilities.some(ab => ab.id === a.id && ab.name !== '')}
+                  placeholder="Name der Fähigkeit *"
+                  value={a.name}
+                  onChange={e => updateAbility(a.id, 'name', e.target.value)}
+                  className="flex-1 bg-zinc-800 border border-zinc-700 rounded px-2 py-1 text-xs text-zinc-100 placeholder-zinc-600 focus:outline-none focus:border-amber-500"
+                />
+                <button type="button" onClick={() => removeAbility(a.id)}
+                  className="p-1 text-zinc-600 hover:text-red-400 flex-shrink-0">
+                  <X className="w-3.5 h-3.5" />
+                </button>
+              </div>
+              <textarea
+                rows={2}
+                placeholder="Beschreibung…"
+                value={a.description}
+                onChange={e => updateAbility(a.id, 'description', e.target.value)}
+                className="w-full bg-zinc-800 border border-zinc-700 rounded px-2 py-1 text-xs text-zinc-100 placeholder-zinc-600 focus:outline-none focus:border-amber-500 resize-none"
+              />
+              <div className="grid grid-cols-2 gap-2">
+                <div>
+                  <label className="text-[10px] text-zinc-500 mb-0.5 block">Schadenswürfel</label>
+                  <input
+                    type="text"
+                    placeholder="10d6"
+                    value={a.damage_formula}
+                    onChange={e => updateAbility(a.id, 'damage_formula', e.target.value)}
+                    className="w-full bg-zinc-800 border border-zinc-700 rounded px-2 py-1 text-xs text-zinc-100 placeholder-zinc-600 focus:outline-none focus:border-amber-500"
+                  />
+                </div>
+                <div>
+                  <label className="text-[10px] text-zinc-500 mb-0.5 block">Ladungen max (0=unbegrenzt)</label>
+                  <input
+                    type="number"
+                    min={0}
+                    value={a.charges_max}
+                    onChange={e => updateAbility(a.id, 'charges_max', parseInt(e.target.value) || 0)}
+                    className="w-full bg-zinc-800 border border-zinc-700 rounded px-2 py-1 text-xs text-zinc-100 focus:outline-none focus:border-amber-500"
+                  />
+                </div>
+              </div>
+              <div className="grid grid-cols-2 gap-2">
+                <div>
+                  <label className="text-[10px] text-zinc-500 mb-0.5 block">Rettungswurf</label>
+                  <select
+                    value={a.save_type}
+                    onChange={e => updateAbility(a.id, 'save_type', e.target.value)}
+                    className="w-full bg-zinc-800 border border-zinc-700 rounded px-2 py-1 text-xs text-zinc-300 focus:outline-none focus:border-amber-500"
+                  >
+                    {SAVE_TYPES.map(s => <option key={s} value={s}>{s || '—'}</option>)}
+                  </select>
+                </div>
+                {a.save_type && (
+                  <div>
+                    <label className="text-[10px] text-zinc-500 mb-0.5 block">RW-SG</label>
+                    <input
+                      type="number"
+                      min={1}
+                      max={30}
+                      value={a.save_dc}
+                      onChange={e => updateAbility(a.id, 'save_dc', parseInt(e.target.value) || 0)}
+                      className="w-full bg-zinc-800 border border-zinc-700 rounded px-2 py-1 text-xs text-zinc-100 focus:outline-none focus:border-amber-500"
+                    />
+                  </div>
+                )}
+              </div>
+            </div>
+          ))}
+        </div>
       </div>
 
       {/* Actions */}
@@ -320,6 +575,8 @@ export default function ExtrasPage() {
   const [showModal, setShowModal]           = useState(false)
   const [editingItem, setEditingItem]       = useState<CompanionCharacter | null>(null)
   const [form, setForm]                     = useState<FormState>(EMPTY_FORM)
+  const [formDice, setFormDice]             = useState<FavDice[]>([])
+  const [formAbilities, setFormAbilities]   = useState<Ability[]>([])
   const [saving, setSaving]                 = useState(false)
   const [deleteConfirmId, setDeleteConfirmId] = useState<string | null>(null)
 
@@ -346,6 +603,8 @@ export default function ExtrasPage() {
   const openCreate = () => {
     setEditingItem(null)
     setForm(EMPTY_FORM)
+    setFormDice([])
+    setFormAbilities([])
     setShowModal(true)
   }
 
@@ -356,6 +615,7 @@ export default function ExtrasPage() {
       type: c.type,
       image_url: c.image_url ?? '',
       max_hp: c.max_hp != null ? String(c.max_hp) : '',
+      current_hp: c.current_hp != null ? String(c.current_hp) : '',
       armor_class: c.armor_class != null ? String(c.armor_class) : '',
       speed: c.speed != null ? String(c.speed) : '',
       str: c.str != null ? String(c.str) : '',
@@ -366,6 +626,8 @@ export default function ExtrasPage() {
       cha: c.cha != null ? String(c.cha) : '',
       notes: c.notes ?? '',
     })
+    setFormDice(c.favorite_dice ?? [])
+    setFormAbilities(c.abilities ?? [])
     setShowModal(true)
   }
 
@@ -373,6 +635,8 @@ export default function ExtrasPage() {
     setShowModal(false)
     setEditingItem(null)
     setForm(EMPTY_FORM)
+    setFormDice([])
+    setFormAbilities([])
   }
 
   const handleSave = async (e: React.FormEvent) => {
@@ -381,19 +645,22 @@ export default function ExtrasPage() {
     setSaving(true)
 
     const payload = {
-      name:         form.name.trim(),
-      type:         form.type,
-      image_url:    form.image_url.trim() || null,
-      max_hp:       parseOptionalInt(form.max_hp),
-      armor_class:  parseOptionalInt(form.armor_class),
-      speed:        parseOptionalInt(form.speed),
-      str:          parseOptionalInt(form.str),
-      dex:          parseOptionalInt(form.dex),
-      con:          parseOptionalInt(form.con),
-      int:          parseOptionalInt(form.int),
-      wis:          parseOptionalInt(form.wis),
-      cha:          parseOptionalInt(form.cha),
-      notes:        form.notes.trim() || null,
+      name:          form.name.trim(),
+      type:          form.type,
+      image_url:     form.image_url.trim() || null,
+      max_hp:        parseOptionalInt(form.max_hp),
+      current_hp:    parseOptionalInt(form.current_hp),
+      armor_class:   parseOptionalInt(form.armor_class),
+      speed:         parseOptionalInt(form.speed),
+      str:           parseOptionalInt(form.str),
+      dex:           parseOptionalInt(form.dex),
+      con:           parseOptionalInt(form.con),
+      int:           parseOptionalInt(form.int),
+      wis:           parseOptionalInt(form.wis),
+      cha:           parseOptionalInt(form.cha),
+      notes:         form.notes.trim() || null,
+      favorite_dice: formDice,
+      abilities:     formAbilities,
     }
 
     if (editingItem) {
@@ -413,6 +680,49 @@ export default function ExtrasPage() {
   const handleDelete = async (id: string) => {
     await supabase.from('companion_characters').delete().eq('id', id)
     setDeleteConfirmId(null)
+  }
+
+  const applyCompanionHp = async (c: CompanionCharacter, delta: number) => {
+    const maxHp = c.max_hp ?? 999
+    const current = c.current_hp ?? maxHp
+    const newHp = Math.max(0, Math.min(maxHp, current + delta))
+    await supabase.from('companion_characters').update({ current_hp: newHp }).eq('id', c.id)
+    await supabase.from('battle_placed_models').update({ current_hp: newHp }).eq('companion_id', c.id)
+  }
+
+  const useAbility = async (c: CompanionCharacter, abilityId: string) => {
+    const abilities = (c.abilities ?? []).map((a: Ability) =>
+      a.id === abilityId && (a.charges_max === 0 || a.charges_used < a.charges_max)
+        ? { ...a, charges_used: a.charges_used + 1 } : a
+    )
+    await supabase.from('companion_characters').update({ abilities }).eq('id', c.id)
+    await supabase.from('battle_placed_models').update({ abilities }).eq('companion_id', c.id)
+  }
+
+  const deployToMap = async (c: CompanionCharacter) => {
+    const { data: maps } = await supabase.from('battle_maps').select('id').eq('is_active', true).limit(1)
+    if (!maps?.length) { alert('Kein aktives Spielfeld vorhanden.'); return }
+    const mapId = maps[0].id
+    await supabase.from('battle_placed_models').insert({
+      map_id:        mapId,
+      companion_id:  c.id,
+      name:          c.name,
+      image_url:     c.image_url ?? '',
+      col:           0, row: 0,
+      span:          1,
+      rotation:      0,
+      is_hidden:     false,
+      z_index:       10,
+      current_hp:    c.current_hp ?? c.max_hp,
+      max_hp:        c.max_hp,
+      armor_class:   c.armor_class,
+      speed:         c.speed,
+      model_stats:   { str: c.str, dex: c.dex, con: c.con, int: c.int, wis: c.wis, cha: c.cha },
+      notes:         c.notes,
+      favorite_dice: c.favorite_dice ?? [],
+      abilities:     c.abilities ?? [],
+    })
+    alert(`${c.name} wurde auf dem Spielfeld bereitgestellt (Feld 0,0). Bitte auf dem Spielfeld positionieren.`)
   }
 
   const filtered = companions.filter(c => {
@@ -495,6 +805,9 @@ export default function ExtrasPage() {
               onDelete={handleDelete}
               deleteConfirmId={deleteConfirmId}
               setDeleteConfirmId={setDeleteConfirmId}
+              onApplyHp={applyCompanionHp}
+              onUseAbility={useAbility}
+              onDeploy={deployToMap}
             />
           ))}
         </div>
@@ -522,6 +835,10 @@ export default function ExtrasPage() {
               onCancel={closeModal}
               saving={saving}
               isEdit={!!editingItem}
+              formDice={formDice}
+              setFormDice={setFormDice}
+              formAbilities={formAbilities}
+              setFormAbilities={setFormAbilities}
             />
           </div>
         </div>

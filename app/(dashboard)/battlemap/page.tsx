@@ -82,6 +82,16 @@ interface PlacedModel {
   rotation: number
   is_hidden: boolean
   z_index: number
+  // V21
+  companion_id: string | null
+  current_hp: number | null
+  max_hp: number | null
+  armor_class: number | null
+  speed: number | null
+  model_stats: Record<string, number> | null
+  notes: string | null
+  favorite_dice: any[]
+  abilities: any[]
 }
 
 interface PlacedAsset {
@@ -854,6 +864,7 @@ export default function BattleMapPage() {
   const [assetForm, setAssetForm] = useState({ name: '', width_cells: 2, height_cells: 2, rotation: 0 })
   const [deployingAssetData, setDeployingAssetData] = useState<{ image_url: string; name: string; width_cells: number; height_cells: number; rotation: number } | null>(null)
   const [selectedAssetId, setSelectedAssetId] = useState<string | null>(null)
+  const [assetEditUnlocked, setAssetEditUnlocked] = useState<string | null>(null)
   // Map form preset gallery
   const [mapPresets, setMapPresets] = useState<TokenImage[]>([])
   const [mapPresetsLoaded, setMapPresetsLoaded] = useState(false)
@@ -1274,12 +1285,11 @@ export default function BattleMapPage() {
   }, [])
 
   const loadMapPresets = useCallback(async () => {
-    if (mapPresetsLoaded) return
     const res = await fetch('/api/tokens?category=maps')
     const json = await res.json()
     setMapPresets(json.images ?? [])
     setMapPresetsLoaded(true)
-  }, [mapPresetsLoaded])
+  }, [])
 
   // ── V20: Model overlap check ──
   const modelOverlaps = (col: number, row: number, span: number, excludeId?: string): boolean => {
@@ -1328,6 +1338,32 @@ export default function BattleMapPage() {
     setPlacedModels(prev => prev.map(x => x.id === m.id ? { ...x, is_hidden: !m.is_hidden } : x))
   }
 
+  // ── V21: Model HP + abilities ──
+  const applyModelHp = async (modelId: string, delta: number) => {
+    const model = placedModels.find(m => m.id === modelId)
+    if (!model || model.max_hp == null) return
+    const newHp = Math.max(0, Math.min(model.max_hp, (model.current_hp ?? model.max_hp) + delta))
+    await supabase.from('battle_placed_models').update({ current_hp: newHp }).eq('id', modelId)
+    if (model.companion_id) {
+      await supabase.from('companion_characters').update({ current_hp: newHp }).eq('id', model.companion_id)
+    }
+    setPlacedModels(prev => prev.map(x => x.id === modelId ? { ...x, current_hp: newHp } : x))
+  }
+
+  const useModelAbility = async (modelId: string, abilityId: string) => {
+    const model = placedModels.find(m => m.id === modelId)
+    if (!model) return
+    const abilities = (model.abilities ?? []).map((a: any) =>
+      a.id === abilityId && (a.charges_max === 0 || a.charges_used < a.charges_max)
+        ? { ...a, charges_used: a.charges_used + 1 } : a
+    )
+    await supabase.from('battle_placed_models').update({ abilities }).eq('id', modelId)
+    if (model.companion_id) {
+      await supabase.from('companion_characters').update({ abilities }).eq('id', model.companion_id)
+    }
+    setPlacedModels(prev => prev.map(x => x.id === modelId ? { ...x, abilities } : x))
+  }
+
   // ── V20: Place asset on map (free position) ──
   const placeAssetAt = async (xPct: number, yPct: number) => {
     if (!deployingAssetData || !activeMap) return
@@ -1351,6 +1387,12 @@ export default function BattleMapPage() {
     await supabase.from('battle_placed_assets').delete().eq('id', id)
     setPlacedAssets(prev => prev.filter(a => a.id !== id))
     if (selectedAssetId === id) setSelectedAssetId(null)
+    if (assetEditUnlocked === id) setAssetEditUnlocked(null)
+  }
+
+  const updateAssetField = async (id: string, patch: Partial<PlacedAsset>) => {
+    await supabase.from('battle_placed_assets').update(patch).eq('id', id)
+    setPlacedAssets(prev => prev.map(a => a.id === id ? { ...a, ...patch } : a))
   }
 
   // ── Encounter helpers ──
@@ -2229,19 +2271,25 @@ export default function BattleMapPage() {
             <button
               onClick={() => loadMapPresets()}
               className="text-[10px] text-zinc-600 hover:text-zinc-400 underline mb-1">
-              {mapPresetsLoaded ? 'Preset-Maps' : 'Preset-Maps laden'}
+              Preset-Maps neu laden
             </button>
             {mapPresets.length > 0 && (
-              <div className="flex flex-wrap gap-1.5 mt-1 max-h-24 overflow-y-auto">
-                {mapPresets.map(img => (
-                  <button key={img.filename} onClick={() => setNewMapForm(f => ({ ...f, image_url: img.url, name: f.name || img.name }))}
-                    title={img.name}
-                    className={`relative rounded overflow-hidden border transition-all ${newMapForm.image_url === img.url ? 'border-amber-500' : 'border-zinc-700/60 hover:border-zinc-500'}`}>
-                    {/* eslint-disable-next-line @next/next/no-img-element */}
-                    <img src={img.url} alt={img.name} className="w-16 h-10 object-cover" />
-                    <div className="absolute inset-x-0 bottom-0 bg-black/60 text-[8px] text-zinc-200 truncate px-0.5">{img.name}</div>
-                  </button>
-                ))}
+              <div className="mt-1">
+                {newMapForm.image_url && mapPresets.some(img => img.url === newMapForm.image_url) && (
+                  /* eslint-disable-next-line @next/next/no-img-element */
+                  <img src={newMapForm.image_url} alt="Vorschau" className="w-full aspect-video object-cover rounded-lg border border-amber-500 mb-2" />
+                )}
+                <div className="grid grid-cols-3 gap-2 max-h-40 overflow-y-auto">
+                  {mapPresets.map(img => (
+                    <button key={img.filename} onClick={() => setNewMapForm(f => ({ ...f, image_url: img.url, name: f.name || img.name }))}
+                      title={img.name}
+                      className={`relative rounded overflow-hidden border transition-all ${newMapForm.image_url === img.url ? 'border-amber-500' : 'border-zinc-700/60 hover:border-zinc-500'}`}>
+                      {/* eslint-disable-next-line @next/next/no-img-element */}
+                      <img src={img.url} alt={img.name} className="w-full aspect-video object-cover rounded" />
+                      <div className="absolute inset-x-0 bottom-0 bg-black/60 text-[8px] text-zinc-200 truncate px-0.5">{img.name}</div>
+                    </button>
+                  ))}
+                </div>
               </div>
             )}
           </div>
@@ -3053,27 +3101,107 @@ export default function BattleMapPage() {
                           <p className="text-[10px] text-zinc-700 italic px-1">Keine Modelle auf der Karte</p>
                         )}
                         {placedModels.map(m => (
-                          <div key={m.id}
-                            className={`rounded-lg border p-1.5 cursor-pointer transition-colors ${selectedModelId === m.id ? 'border-red-600/60 bg-red-950/20' : 'border-zinc-700/60 bg-zinc-900/60 hover:bg-zinc-800/60'}`}
-                            onClick={() => setSelectedModelId(m.id === selectedModelId ? null : m.id)}>
-                            <div className="flex items-center gap-1.5">
-                              {/* eslint-disable-next-line @next/next/no-img-element */}
-                              <img src={m.image_url} alt={m.name} className="w-8 h-8 object-contain rounded flex-shrink-0" />
-                              <div className="flex-1 min-w-0">
-                                <p className="text-[11px] font-semibold text-zinc-200 truncate">{m.name}</p>
-                                <p className="text-[9px] text-zinc-600">{m.span}×{m.span} · {m.rotation}° {m.is_hidden ? '· versteckt' : ''}</p>
-                              </div>
-                              <div className="flex flex-col gap-0.5">
-                                <button onClick={e => { e.stopPropagation(); toggleModelHidden(m) }}
-                                  className="p-0.5 text-zinc-600 hover:text-zinc-300">
-                                  {m.is_hidden ? <EyeOff className="w-3 h-3" /> : <Eye className="w-3 h-3" />}
-                                </button>
-                                <button onClick={e => { e.stopPropagation(); deleteModel(m.id) }}
-                                  className="p-0.5 text-zinc-600 hover:text-red-500">
-                                  <Trash2 className="w-3 h-3" />
-                                </button>
+                          <div key={m.id}>
+                            <div
+                              className={`rounded-lg border p-1.5 cursor-pointer transition-colors ${selectedModelId === m.id ? 'border-red-600/60 bg-red-950/20' : 'border-zinc-700/60 bg-zinc-900/60 hover:bg-zinc-800/60'}`}
+                              onClick={() => setSelectedModelId(m.id === selectedModelId ? null : m.id)}>
+                              <div className="flex items-center gap-1.5">
+                                {/* eslint-disable-next-line @next/next/no-img-element */}
+                                <img src={m.image_url} alt={m.name} className="w-8 h-8 object-contain rounded flex-shrink-0" />
+                                <div className="flex-1 min-w-0">
+                                  <p className="text-[11px] font-semibold text-zinc-200 truncate">{m.name}</p>
+                                  <p className="text-[9px] text-zinc-600">{m.span}×{m.span} · {m.rotation}° {m.is_hidden ? '· versteckt' : ''}</p>
+                                  {m.max_hp != null && (
+                                    <div className="flex items-center gap-1 mt-0.5">
+                                      <span className="text-[9px] text-red-400">{m.current_hp ?? m.max_hp}/{m.max_hp} HP</span>
+                                    </div>
+                                  )}
+                                </div>
+                                <div className="flex flex-col gap-0.5">
+                                  <button onClick={e => { e.stopPropagation(); toggleModelHidden(m) }}
+                                    className="p-0.5 text-zinc-600 hover:text-zinc-300">
+                                    {m.is_hidden ? <EyeOff className="w-3 h-3" /> : <Eye className="w-3 h-3" />}
+                                  </button>
+                                  <button onClick={e => { e.stopPropagation(); deleteModel(m.id) }}
+                                    className="p-0.5 text-zinc-600 hover:text-red-500">
+                                    <Trash2 className="w-3 h-3" />
+                                  </button>
+                                </div>
                               </div>
                             </div>
+                            {/* V21: Model stat panel */}
+                            {selectedModelId === m.id && (
+                              <div className="bg-zinc-900/80 border border-red-800/30 rounded-lg p-2 mt-0.5 space-y-2">
+                                {/* HP bar */}
+                                {m.max_hp != null && (
+                                  <div>
+                                    <div className="flex items-center justify-between mb-1">
+                                      <span className="text-[10px] text-zinc-400">HP</span>
+                                      <span className="text-[10px] font-bold text-zinc-200">{m.current_hp ?? m.max_hp} / {m.max_hp}</span>
+                                    </div>
+                                    <div className="w-full h-1.5 bg-zinc-700 rounded-full overflow-hidden">
+                                      <div className={`h-full transition-all ${((m.current_hp ?? m.max_hp) / m.max_hp) > 0.6 ? 'bg-emerald-500' : ((m.current_hp ?? m.max_hp) / m.max_hp) > 0.3 ? 'bg-amber-500' : 'bg-red-500'}`}
+                                        style={{ width: `${Math.max(0, Math.min(100, ((m.current_hp ?? m.max_hp) / m.max_hp) * 100))}%` }} />
+                                    </div>
+                                    <div className="flex gap-1 mt-1">
+                                      <button onClick={() => applyModelHp(m.id, -1)} className="flex-1 py-0.5 rounded bg-zinc-800 border border-zinc-700 text-[10px] text-zinc-400 hover:text-zinc-200">−1</button>
+                                      <button onClick={() => applyModelHp(m.id, -5)} className="flex-1 py-0.5 rounded bg-zinc-800 border border-zinc-700 text-[10px] text-zinc-400 hover:text-zinc-200">−5</button>
+                                      <button onClick={() => applyModelHp(m.id, 5)} className="flex-1 py-0.5 rounded bg-zinc-800 border border-zinc-700 text-[10px] text-zinc-400 hover:text-zinc-200">+5</button>
+                                      <button onClick={() => applyModelHp(m.id, 1)} className="flex-1 py-0.5 rounded bg-zinc-800 border border-zinc-700 text-[10px] text-zinc-400 hover:text-zinc-200">+1</button>
+                                    </div>
+                                  </div>
+                                )}
+                                {/* AC / Speed */}
+                                <div className="flex gap-2 text-[10px]">
+                                  {m.armor_class != null && <span className="text-zinc-400">🛡 <span className="text-zinc-200 font-bold">{m.armor_class}</span> RK</span>}
+                                  {m.speed != null && <span className="text-zinc-400">⚡ <span className="text-zinc-200 font-bold">{m.speed}</span> ft</span>}
+                                </div>
+                                {/* Ability scores */}
+                                {m.model_stats && Object.keys(m.model_stats).length > 0 && (
+                                  <div className="grid grid-cols-6 gap-0.5">
+                                    {(['str','dex','con','int','wis','cha'] as const).map(k => (
+                                      <div key={k} className="text-center bg-zinc-800/60 rounded py-1">
+                                        <p className="text-[8px] text-zinc-600 uppercase">{k}</p>
+                                        <p className="text-[10px] font-bold text-zinc-200">{m.model_stats![k] != null ? (Math.floor((m.model_stats![k]-10)/2) >= 0 ? `+${Math.floor((m.model_stats![k]-10)/2)}` : `${Math.floor((m.model_stats![k]-10)/2)}`) : '—'}</p>
+                                      </div>
+                                    ))}
+                                  </div>
+                                )}
+                                {/* Abilities */}
+                                {m.abilities && m.abilities.length > 0 && (
+                                  <div className="flex flex-wrap gap-1">
+                                    {m.abilities.map((a: any) => {
+                                      const exhausted = a.charges_max > 0 && a.charges_used >= a.charges_max
+                                      return (
+                                        <button key={a.id}
+                                          onClick={() => !exhausted && useModelAbility(m.id, a.id)}
+                                          disabled={exhausted}
+                                          className={`flex items-center gap-0.5 px-1.5 py-0.5 rounded text-[9px] font-semibold border ${exhausted ? 'border-zinc-700 text-zinc-600 cursor-not-allowed' : 'border-amber-700/60 text-amber-300 hover:bg-amber-950/40'}`}>
+                                          {a.name}
+                                          {a.charges_max > 0 && (
+                                            <span className="flex gap-0.5">
+                                              {Array.from({ length: a.charges_max }).map((_: any, i: number) => (
+                                                <span key={i} className={i < a.charges_used ? 'text-zinc-600' : 'text-amber-400'}>{i < a.charges_used ? '○' : '●'}</span>
+                                              ))}
+                                            </span>
+                                          )}
+                                        </button>
+                                      )
+                                    })}
+                                  </div>
+                                )}
+                                {/* Favorite dice */}
+                                {m.favorite_dice && m.favorite_dice.length > 0 && (
+                                  <div className="flex flex-wrap gap-1">
+                                    {m.favorite_dice.map((d: any) => (
+                                      <span key={d.id} className="px-1.5 py-0.5 rounded bg-zinc-800 border border-zinc-700 text-[9px] text-zinc-300">🎲 {d.dice}</span>
+                                    ))}
+                                  </div>
+                                )}
+                                {/* Notes */}
+                                {m.notes && <p className="text-[9px] text-zinc-500 line-clamp-2">{m.notes}</p>}
+                              </div>
+                            )}
                           </div>
                         ))}
                       </>
@@ -3100,21 +3228,69 @@ export default function BattleMapPage() {
                           <p className="text-[10px] text-zinc-700 italic px-1">Keine Assets auf der Karte</p>
                         )}
                         {placedAssets.map(a => (
-                          <div key={a.id}
-                            className={`rounded-lg border p-1.5 cursor-pointer transition-colors ${selectedAssetId === a.id ? 'border-amber-600/60 bg-amber-950/20' : 'border-zinc-700/60 bg-zinc-900/60 hover:bg-zinc-800/60'}`}
-                            onClick={() => setSelectedAssetId(a.id === selectedAssetId ? null : a.id)}>
-                            <div className="flex items-center gap-1.5">
-                              {/* eslint-disable-next-line @next/next/no-img-element */}
-                              <img src={a.image_url} alt={a.name} className="w-8 h-8 object-contain rounded flex-shrink-0" />
-                              <div className="flex-1 min-w-0">
-                                <p className="text-[11px] font-semibold text-zinc-200 truncate">{a.name}</p>
-                                <p className="text-[9px] text-zinc-600">{a.width_cells}×{a.height_cells}F · {a.rotation}°</p>
+                          <div key={a.id}>
+                            <div
+                              className={`rounded-lg border p-1.5 cursor-pointer transition-colors ${selectedAssetId === a.id ? 'border-amber-600/60 bg-amber-950/20' : 'border-zinc-700/60 bg-zinc-900/60 hover:bg-zinc-800/60'}`}
+                              onClick={() => setSelectedAssetId(a.id === selectedAssetId ? null : a.id)}>
+                              <div className="flex items-center gap-1.5">
+                                {/* eslint-disable-next-line @next/next/no-img-element */}
+                                <img src={a.image_url} alt={a.name} className="w-8 h-8 object-contain rounded flex-shrink-0" />
+                                <div className="flex-1 min-w-0">
+                                  <p className="text-[11px] font-semibold text-zinc-200 truncate">{a.name}</p>
+                                  <p className="text-[9px] text-zinc-600">{a.width_cells}×{a.height_cells}F · {a.rotation}°</p>
+                                </div>
+                                <button onClick={e => { e.stopPropagation(); setAssetEditUnlocked(assetEditUnlocked === a.id ? null : a.id) }}
+                                  className={`p-0.5 ${assetEditUnlocked === a.id ? 'text-amber-400' : 'text-zinc-600 hover:text-zinc-300'}`}
+                                  title={assetEditUnlocked === a.id ? 'Sperren' : 'Bearbeiten'}>
+                                  {assetEditUnlocked === a.id ? <Unlock className="w-3 h-3" /> : <Lock className="w-3 h-3" />}
+                                </button>
+                                <button onClick={e => { e.stopPropagation(); deleteAsset(a.id) }}
+                                  className="p-0.5 text-zinc-600 hover:text-red-500">
+                                  <Trash2 className="w-3 h-3" />
+                                </button>
                               </div>
-                              <button onClick={e => { e.stopPropagation(); deleteAsset(a.id) }}
-                                className="p-0.5 text-zinc-600 hover:text-red-500">
-                                <Trash2 className="w-3 h-3" />
-                              </button>
                             </div>
+                            {/* V21: Asset editing panel */}
+                            {assetEditUnlocked === a.id && (
+                              <div className="bg-zinc-900/80 border border-amber-800/30 rounded-lg p-2 mt-0.5 space-y-2">
+                                <p className="text-[9px] text-amber-400 font-semibold">Position verschieben</p>
+                                <div className="grid grid-cols-3 gap-1 w-24 mx-auto">
+                                  <div />
+                                  <button onClick={() => updateAssetField(a.id, { y_pct: Math.max(0, a.y_pct - 1) })}
+                                    className="py-0.5 rounded bg-zinc-800 border border-zinc-700 text-[10px] text-zinc-300 hover:text-zinc-100">▲</button>
+                                  <div />
+                                  <button onClick={() => updateAssetField(a.id, { x_pct: Math.max(0, a.x_pct - 1) })}
+                                    className="py-0.5 rounded bg-zinc-800 border border-zinc-700 text-[10px] text-zinc-300 hover:text-zinc-100">◀</button>
+                                  <div className="flex items-center justify-center text-[8px] text-zinc-600">pos</div>
+                                  <button onClick={() => updateAssetField(a.id, { x_pct: Math.min(100, a.x_pct + 1) })}
+                                    className="py-0.5 rounded bg-zinc-800 border border-zinc-700 text-[10px] text-zinc-300 hover:text-zinc-100">▶</button>
+                                  <div />
+                                  <button onClick={() => updateAssetField(a.id, { y_pct: Math.min(100, a.y_pct + 1) })}
+                                    className="py-0.5 rounded bg-zinc-800 border border-zinc-700 text-[10px] text-zinc-300 hover:text-zinc-100">▼</button>
+                                  <div />
+                                </div>
+                                <div>
+                                  <div className="flex items-center justify-between mb-0.5">
+                                    <label className="text-[9px] text-zinc-500">Rotation: {Math.round(a.rotation)}°</label>
+                                  </div>
+                                  <input type="range" min={0} max={359} step={1} value={a.rotation}
+                                    onChange={e => updateAssetField(a.id, { rotation: Number(e.target.value) })}
+                                    className="w-full accent-amber-500" />
+                                </div>
+                                <div>
+                                  <label className="text-[9px] text-zinc-500 block mb-0.5">Breite: {a.width_cells}F</label>
+                                  <input type="range" min={0.5} max={10} step={0.5} value={a.width_cells}
+                                    onChange={e => updateAssetField(a.id, { width_cells: Number(e.target.value) })}
+                                    className="w-full accent-amber-500" />
+                                </div>
+                                <div>
+                                  <label className="text-[9px] text-zinc-500 block mb-0.5">Höhe: {a.height_cells}F</label>
+                                  <input type="range" min={0.5} max={10} step={0.5} value={a.height_cells}
+                                    onChange={e => updateAssetField(a.id, { height_cells: Number(e.target.value) })}
+                                    className="w-full accent-amber-500" />
+                                </div>
+                              </div>
+                            )}
                           </div>
                         ))}
                       </>
@@ -3292,9 +3468,11 @@ export default function BattleMapPage() {
                   )
                 })}
 
-                {/* ── V20: Placed Models (above assets, below tokens) ── */}
+                {/* ── V20/V21: Placed Models (above assets, below tokens) ── */}
                 {placedModels.filter(m => isGM || !m.is_hidden).map(m => {
                   const spanPx = Math.max(1, Math.ceil(m.span)) * cs
+                  const isDead = m.current_hp === 0
+                  const hpPct = m.max_hp != null ? Math.max(0, Math.min(100, ((m.current_hp ?? m.max_hp) / m.max_hp) * 100)) : null
                   return (
                     <div key={m.id} style={{
                       position: 'absolute',
@@ -3314,6 +3492,19 @@ export default function BattleMapPage() {
                         style={{ width: '100%', height: '100%', objectFit: 'contain', userSelect: 'none',
                           outline: selectedModelId === m.id ? '2px solid rgba(239,68,68,0.8)' : 'none', outlineOffset: '-2px' }}
                         draggable={false} />
+                      {/* Skull overlay if dead */}
+                      {isDead && (
+                        <div style={{ position: 'absolute', inset: 0, display: 'flex', alignItems: 'center', justifyContent: 'center',
+                          background: 'rgba(0,0,0,0.55)', borderRadius: 4 }}>
+                          <span style={{ fontSize: Math.min(spanPx * 0.5, 32) }}>💀</span>
+                        </div>
+                      )}
+                      {/* HP bar */}
+                      {hpPct !== null && !isDead && (
+                        <div style={{ position: 'absolute', bottom: 2, left: 2, right: 2, height: 4, background: 'rgba(0,0,0,0.5)', borderRadius: 2, overflow: 'hidden' }}>
+                          <div style={{ height: '100%', width: `${hpPct}%`, background: hpPct > 60 ? '#10b981' : hpPct > 30 ? '#f59e0b' : '#ef4444', transition: 'width 0.2s' }} />
+                        </div>
+                      )}
                     </div>
                   )
                 })}
