@@ -12,7 +12,6 @@ import {
 import { createClient } from '@/lib/supabase/client'
 import { useAuth } from '@/lib/hooks/useAuth'
 import type { CharacterFullData } from '@/types'
-import { DARK_FANTASY_ICONS, getTokenIcon, isIconId, getIconsByCategory } from '@/lib/token-icons'
 
 // ─── Types ────────────────────────────────────────────────────────────────────
 type TokenSize = 'tiny' | 'small' | 'medium' | 'large' | 'huge' | 'gargantuan' | 'colossal'
@@ -72,21 +71,26 @@ interface CombatLogEntry {
 }
 
 // ─── Constants ────────────────────────────────────────────────────────────────
-// Token icons are now SVG dark fantasy icons from lib/token-icons.ts
-// DARK_FANTASY_ICONS, getTokenIcon, isIconId, getIconsByCategory imported above
-
-// Category color accents for the icon picker
-const CATEGORY_COLORS: Record<string, string> = {
-  Untote: 'text-purple-400 border-purple-700/50',
-  Drachen: 'text-red-400 border-red-700/50',
-  Monster: 'text-orange-400 border-orange-700/50',
-  Tiere: 'text-green-400 border-green-700/50',
-  Helden: 'text-sky-400 border-sky-700/50',
-  Dämonen: 'text-rose-400 border-rose-700/50',
-  Magie: 'text-indigo-400 border-indigo-700/50',
-  Menschen: 'text-amber-400 border-amber-700/50',
-  Kreaturen: 'text-teal-400 border-teal-700/50',
-}
+const TOKEN_ICONS = [
+  // Spieler / Helden
+  '⚔️','🛡️','🏹','🪄','🔮','🗡️','🥷','🤺','🧙','💪',
+  // Humanoide
+  '🧝','🧔','👑','🤴','👸','🦸','🦹','💂','🧑‍⚕️','🧌',
+  // Untote / Dunkel
+  '💀','☠️','👻','🧟','🧛','🦴','🧠','👁️','🕷️','🦇',
+  // Drachen / Große Kreaturen
+  '🐉','🐲','🦕','🦖','🦣','🐂','🦏','🐘','🦍','🦬',
+  // Bestien / Tiere
+  '🐺','🦁','🐯','🐻','🦊','🐗','🐍','🐊','🦎','🦅',
+  '🦉','🦆','🐓','🐎','🦂','🕸️','🐛','🦟','🪲','🦗',
+  // Monster / Fabelwesen
+  '👹','👺','👾','👿','😈','🧞','🧜','🧚','🧝','🫀',
+  // Elementar / Magie
+  '🔥','❄️','⚡','🌊','🌪️','☄️','💥','✨','🌟','🌑',
+  '🍄','💎','⚗️','🔑','📜','🪬','🧿','🔔','🌿','🌋',
+  // Umgebung / Objekte
+  '🏰','⛰️','🌲','🌳','🪨','💧','⚓','🗺️','🕯️','⚙️',
+]
 
 interface ConditionDef { id: string; icon: string; color: string; bg: string; border: string }
 const CONDITIONS: ConditionDef[] = [
@@ -308,50 +312,39 @@ function TokenModal({ initial, onSave, onClose, title }: {
             </select>
           </div>
           <div>
-            <label className="text-[10px] uppercase font-semibold text-zinc-500 block mb-1">Token-Symbol</label>
+            <label className="text-[10px] uppercase font-semibold text-zinc-500 block mb-1">Token-Bild</label>
+            {/* URL input – paste any portrait token image link */}
+            <div className="flex gap-2 mb-2">
+              {form.icon?.startsWith('http') ? (
+                // eslint-disable-next-line @next/next/no-img-element
+                <img src={form.icon} alt="preview" className="w-10 h-10 rounded-full object-cover border border-zinc-600 flex-shrink-0" />
+              ) : (
+                <div className="w-10 h-10 rounded-full bg-zinc-800 border border-zinc-600 flex items-center justify-center text-xl flex-shrink-0">
+                  {form.icon}
+                </div>
+              )}
+              <input
+                className="flex-1 bg-zinc-800 border border-zinc-700 rounded-lg px-3 py-2 text-sm text-zinc-100 placeholder-zinc-500 focus:outline-none focus:border-amber-500"
+                placeholder="Portrait-URL einfügen (https://…)"
+                value={form.icon?.startsWith('http') ? form.icon : ''}
+                onChange={e => { if (e.target.value.trim()) setForm(f => ({ ...f, icon: e.target.value.trim() })) }}
+              />
+            </div>
+            <p className="text-[10px] text-zinc-600 mb-2">— oder Emoji wählen —</p>
             <button onClick={() => setShowIcons(!showIcons)}
-              className="flex items-center gap-2 px-3 py-2 rounded-lg bg-zinc-800 border border-zinc-700 text-sm text-zinc-100 hover:border-zinc-500 w-full">
-              <div className="w-7 h-7 rounded-full bg-zinc-700 flex items-center justify-center flex-shrink-0">
-                {isIconId(form.icon) ? (
-                  <svg viewBox="0 0 40 40" className="w-5 h-5"
-                    dangerouslySetInnerHTML={{ __html: getTokenIcon(form.icon)!.svg }} />
-                ) : (
-                  <span className="text-base leading-none">{form.icon}</span>
-                )}
-              </div>
-              <span className="text-zinc-400 text-xs flex-1 text-left">
-                {isIconId(form.icon) ? getTokenIcon(form.icon)!.name : form.icon}
-              </span>
-              {showIcons ? <ChevronDown className="w-4 h-4 text-zinc-500" /> : <ChevronRightIcon className="w-4 h-4 text-zinc-500" />}
+              className="flex items-center gap-2 px-3 py-1.5 rounded-lg bg-zinc-800 border border-zinc-700 text-xs text-zinc-400 hover:border-zinc-500 mb-1">
+              {showIcons ? <ChevronDown className="w-3.5 h-3.5" /> : <ChevronRightIcon className="w-3.5 h-3.5" />}
+              Emoji-Auswahl {showIcons ? 'schließen' : 'öffnen'}
             </button>
             {showIcons && (
-              <div className="mt-2 bg-zinc-900 rounded-xl border border-zinc-700 overflow-hidden">
-                <div className="max-h-64 overflow-y-auto p-2 space-y-3">
-                  {Object.entries(getIconsByCategory()).map(([cat, icons]) => icons.length === 0 ? null : (
-                    <div key={cat}>
-                      <p className={`text-[9px] uppercase font-bold mb-1.5 px-1 ${CATEGORY_COLORS[cat]?.split(' ')[0] ?? 'text-zinc-500'}`}>{cat}</p>
-                      <div className="grid grid-cols-8 gap-1">
-                        {icons.map(icon => (
-                          <button key={icon.id}
-                            onClick={() => { setForm(f => ({ ...f, icon: icon.id })); setShowIcons(false) }}
-                            title={icon.name}
-                            className={`aspect-square rounded-lg flex items-center justify-center p-1 transition-all ${
-                              form.icon === icon.id
-                                ? 'bg-red-900/40 ring-1 ring-red-600'
-                                : 'bg-zinc-800 hover:bg-zinc-700'
-                            }`}>
-                            <svg viewBox="0 0 40 40" className="w-full h-full"
-                              dangerouslySetInnerHTML={{ __html: icon.svg }} />
-                          </button>
-                        ))}
-                      </div>
-                    </div>
+              <div className="bg-zinc-900 rounded-xl border border-zinc-700 p-2">
+                <div className="grid grid-cols-10 gap-1 max-h-44 overflow-y-auto">
+                  {TOKEN_ICONS.map((icon, i) => (
+                    <button key={i} onClick={() => { setForm(f => ({ ...f, icon })); setShowIcons(false) }}
+                      className={`text-xl p-1.5 rounded-lg hover:bg-zinc-700 transition-colors ${form.icon === icon ? 'bg-red-900/30 ring-1 ring-red-700' : ''}`}>
+                      {icon}
+                    </button>
                   ))}
-                </div>
-                <div className="border-t border-zinc-700 p-2">
-                  <input className="w-full bg-zinc-800 border border-zinc-700 rounded-lg px-2 py-1 text-xs text-zinc-100 placeholder-zinc-600 focus:outline-none"
-                    placeholder="Eigenes Emoji eingeben…"
-                    onChange={e => { if (e.target.value) { setForm(f => ({ ...f, icon: e.target.value })); setShowIcons(false) } }} />
                 </div>
               </div>
             )}
@@ -436,12 +429,10 @@ function TokenPiece({ token, selected, cellSize, isMoving, isDragged, isActiveTu
       {isActiveTurn && (
         <div className="absolute -top-1 -right-1 w-3 h-3 bg-amber-400 rounded-full animate-pulse" />
       )}
-      {isIconId(token.icon) ? (
-        <svg
-          viewBox="0 0 40 40"
-          style={{ width: Math.round(fontSize * 1.4), height: Math.round(fontSize * 1.4) }}
-          dangerouslySetInnerHTML={{ __html: getTokenIcon(token.icon)!.svg }}
-        />
+      {token.icon?.startsWith('http') ? (
+        // eslint-disable-next-line @next/next/no-img-element
+        <img src={token.icon} alt={token.name}
+          style={{ width: pixW - 6, height: pixH - 6, objectFit: 'cover', borderRadius: '50%' }} />
       ) : (
         <span style={{ fontSize, lineHeight: 1 }}>{token.icon}</span>
       )}
@@ -505,9 +496,9 @@ function TokenPanel({ token, onUpdate, onDelete, onClose, onEdit, isGM, myFavori
     <div className="bg-zinc-950 border border-zinc-800 rounded-xl p-4 space-y-3 w-72">
       {/* Header */}
       <div className="flex items-center gap-2">
-        {isIconId(token.icon) ? (
-          <svg viewBox="0 0 40 40" className="w-8 h-8 flex-shrink-0"
-            dangerouslySetInnerHTML={{ __html: getTokenIcon(token.icon)!.svg }} />
+        {token.icon?.startsWith('http') ? (
+          // eslint-disable-next-line @next/next/no-img-element
+          <img src={token.icon} alt={token.name} className="w-8 h-8 rounded-full object-cover flex-shrink-0" />
         ) : (
           <span className="text-2xl">{token.icon}</span>
         )}
@@ -2359,9 +2350,9 @@ export default function BattleMapPage() {
                         <div className="w-7 h-7 rounded flex items-center justify-center bg-zinc-800/80 border border-zinc-700/60 flex-shrink-0">
                           <span className="text-xs font-bold text-amber-500">{modSign(t.initiative ?? 0)}</span>
                         </div>
-                        {isIconId(t.icon) ? (
-                          <svg viewBox="0 0 40 40" className="w-6 h-6 flex-shrink-0"
-                            dangerouslySetInnerHTML={{ __html: getTokenIcon(t.icon)!.svg }} />
+                        {t.icon?.startsWith('http') ? (
+                          // eslint-disable-next-line @next/next/no-img-element
+                          <img src={t.icon} alt={t.name} className="w-6 h-6 rounded-full object-cover flex-shrink-0" />
                         ) : (
                           <span className="text-xl flex-shrink-0">{t.icon}</span>
                         )}
@@ -2519,9 +2510,9 @@ export default function BattleMapPage() {
                         }`}
                         onClick={() => setSelectedToken(t.id === selectedToken ? null : t.id)}>
                         <div className="flex items-center gap-1.5 mb-1">
-                          {isIconId(t.icon) ? (
-                            <svg viewBox="0 0 40 40" className="w-5 h-5 flex-shrink-0"
-                              dangerouslySetInnerHTML={{ __html: getTokenIcon(t.icon)!.svg }} />
+                          {t.icon?.startsWith('http') ? (
+                            // eslint-disable-next-line @next/next/no-img-element
+                            <img src={t.icon} alt={t.name} className="w-5 h-5 rounded-full object-cover flex-shrink-0" />
                           ) : (
                             <span className="text-base flex-shrink-0">{t.icon}</span>
                           )}
