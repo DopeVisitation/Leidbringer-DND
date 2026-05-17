@@ -1,7 +1,7 @@
 'use client'
 
 import { useState, useEffect } from 'react'
-import { Backpack, Plus, Trash2, X, User, Dices } from 'lucide-react'
+import { Backpack, Plus, Trash2, X, User, Dices, Edit2, Save, Table2, ToggleLeft, ToggleRight } from 'lucide-react'
 import { createClient } from '@/lib/supabase/client'
 import { useAuth } from '@/lib/hooks/useAuth'
 import type { LootItem, LootRarity } from '@/types'
@@ -10,6 +10,31 @@ import {
   rollD4, rollD100, getItemFromTable,
   type LootRarityKey, type LootCategory,
 } from '@/lib/loot-tables'
+
+interface LootTableEntry {
+  id: string
+  name: string
+  description: string | null
+  category: string
+  rarity: string
+  dice_type: string
+  min_roll: number
+  max_roll: number
+  prerequisites: string | null
+  is_active: boolean
+  created_at: string
+}
+
+const ENTRY_CATEGORIES = ['Arcana', 'Armaments', 'Implements', 'Relics', 'Custom']
+const ENTRY_RARITIES: { key: string; label: string }[] = [
+  { key: 'common', label: 'Gewöhnlich' }, { key: 'uncommon', label: 'Ungewöhnlich' },
+  { key: 'rare', label: 'Selten' }, { key: 'very_rare', label: 'Sehr selten' },
+  { key: 'legendary', label: 'Legendär' },
+]
+const BLANK_ENTRY_FORM = {
+  name: '', description: '', category: 'Arcana', rarity: 'common',
+  dice_type: 'd100', min_roll: 1, max_roll: 100, prerequisites: '',
+}
 
 const RARITY_CONFIG: Record<LootRarity, { label: string; text: string; border: string; bg: string; glow: string }> = {
   common:    { label: 'Gewöhnlich',   text: 'text-zinc-300',   border: 'border-zinc-600',   bg: 'bg-zinc-800',        glow: '' },
@@ -38,7 +63,7 @@ const CATEGORY_ICONS: Record<LootCategory, string> = {
   Arcana: '🔮', Armaments: '⚔️', Implements: '🛠️', Relics: '✨',
 }
 
-type Tab = 'group' | 'personal'
+type Tab = 'group' | 'personal' | 'loot_table'
 
 interface RollResult {
   d4: number
@@ -68,6 +93,13 @@ export default function LootPage() {
   const [rollResult, setRollResult] = useState<RollResult | null>(null)
   const [rolling, setRolling] = useState(false)
   const [addingRoll, setAddingRoll] = useState(false)
+
+  // Loot table editor state (GM only)
+  const [lootTableEntries, setLootTableEntries] = useState<LootTableEntry[]>([])
+  const [showEntryForm, setShowEntryForm] = useState(false)
+  const [entryForm, setEntryForm] = useState(BLANK_ENTRY_FORM)
+  const [editingEntryId, setEditingEntryId] = useState<string | null>(null)
+  const [savingEntry, setSavingEntry] = useState(false)
 
   useEffect(() => {
     loadItems()
@@ -150,6 +182,67 @@ export default function LootPage() {
     setAddingRoll(false)
   }
 
+  // ── Loot Table Editor (GM) ───────────────────────────────────────────────
+  const loadLootTable = async () => {
+    const { data } = await supabase
+      .from('loot_table_entries')
+      .select('*')
+      .order('category')
+      .order('rarity')
+      .order('min_roll')
+    if (data) setLootTableEntries(data as LootTableEntry[])
+  }
+
+  useEffect(() => {
+    if (isGM && activeTab === 'loot_table') loadLootTable()
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [isGM, activeTab])
+
+  const saveEntry = async () => {
+    if (!user || !entryForm.name.trim()) return
+    setSavingEntry(true)
+    const payload = {
+      name: entryForm.name.trim(),
+      description: entryForm.description.trim() || null,
+      category: entryForm.category,
+      rarity: entryForm.rarity,
+      dice_type: entryForm.dice_type,
+      min_roll: entryForm.min_roll,
+      max_roll: entryForm.max_roll,
+      prerequisites: entryForm.prerequisites.trim() || null,
+    }
+    if (editingEntryId) {
+      await supabase.from('loot_table_entries').update(payload).eq('id', editingEntryId)
+    } else {
+      await supabase.from('loot_table_entries').insert({ ...payload, created_by: user.id })
+    }
+    setEntryForm(BLANK_ENTRY_FORM)
+    setEditingEntryId(null)
+    setShowEntryForm(false)
+    setSavingEntry(false)
+    loadLootTable()
+  }
+
+  const deleteEntry = async (id: string) => {
+    await supabase.from('loot_table_entries').delete().eq('id', id)
+    loadLootTable()
+  }
+
+  const toggleEntryActive = async (id: string, current: boolean) => {
+    await supabase.from('loot_table_entries').update({ is_active: !current }).eq('id', id)
+    loadLootTable()
+  }
+
+  const startEditEntry = (e: LootTableEntry) => {
+    setEntryForm({
+      name: e.name, description: e.description ?? '', category: e.category,
+      rarity: e.rarity, dice_type: e.dice_type, min_roll: e.min_roll,
+      max_roll: e.max_roll, prerequisites: e.prerequisites ?? '',
+    })
+    setEditingEntryId(e.id)
+    setShowEntryForm(true)
+  }
+
   // Group loot = not assigned to anyone
   const groupItems = items.filter((i) => !i.assigned_to)
   // Personal loot = assigned to current user (players see own; GM sees all assigned)
@@ -171,12 +264,14 @@ export default function LootPage() {
           <h1 className="text-xl font-bold text-zinc-100">Loot</h1>
           <span className="text-sm text-zinc-500">{items.length} Items</span>
         </div>
-        <button
-          onClick={() => setShowForm(!showForm)}
-          className="flex items-center gap-2 px-4 py-2 rounded-lg bg-amber-600 hover:bg-amber-500 text-sm font-semibold text-white transition-colors"
-        >
-          <Plus className="w-4 h-4" /> Hinzufügen
-        </button>
+        {activeTab !== 'loot_table' && (
+          <button
+            onClick={() => setShowForm(!showForm)}
+            className="flex items-center gap-2 px-4 py-2 rounded-lg bg-amber-600 hover:bg-amber-500 text-sm font-semibold text-white transition-colors"
+          >
+            <Plus className="w-4 h-4" /> Hinzufügen
+          </button>
+        )}
       </div>
 
       {/* ── Loot-Tabelle würfeln ─────────────────────────────────────────── */}
@@ -293,14 +388,12 @@ export default function LootPage() {
         )}
       </div>
 
-      {/* Tabs: Gruppen-Loot / Persönlicher Loot */}
+      {/* Tabs: Gruppen-Loot / Persönlicher Loot / Loot-Tabelle (GM) */}
       <div className="flex gap-1 bg-zinc-900 border border-zinc-800 rounded-xl p-1">
         <button
           onClick={() => setActiveTab('group')}
           className={`flex-1 flex items-center justify-center gap-2 py-2 rounded-lg text-sm font-medium transition-colors ${
-            activeTab === 'group'
-              ? 'bg-amber-600 text-white'
-              : 'text-zinc-400 hover:text-zinc-200'
+            activeTab === 'group' ? 'bg-amber-600 text-white' : 'text-zinc-400 hover:text-zinc-200'
           }`}
         >
           <Backpack className="w-4 h-4" />
@@ -312,21 +405,33 @@ export default function LootPage() {
         <button
           onClick={() => setActiveTab('personal')}
           className={`flex-1 flex items-center justify-center gap-2 py-2 rounded-lg text-sm font-medium transition-colors ${
-            activeTab === 'personal'
-              ? 'bg-amber-600 text-white'
-              : 'text-zinc-400 hover:text-zinc-200'
+            activeTab === 'personal' ? 'bg-amber-600 text-white' : 'text-zinc-400 hover:text-zinc-200'
           }`}
         >
           <User className="w-4 h-4" />
-          {isGM ? 'Zugewiesener Loot' : 'Mein Loot'}
+          {isGM ? 'Zugewiesen' : 'Mein Loot'}
           <span className={`text-xs px-1.5 py-0.5 rounded-full ${activeTab === 'personal' ? 'bg-amber-700 text-amber-100' : 'bg-zinc-800 text-zinc-500'}`}>
             {personalItems.length}
           </span>
         </button>
+        {isGM && (
+          <button
+            onClick={() => setActiveTab('loot_table')}
+            className={`flex-1 flex items-center justify-center gap-2 py-2 rounded-lg text-sm font-medium transition-colors ${
+              activeTab === 'loot_table' ? 'bg-violet-700 text-white' : 'text-zinc-400 hover:text-zinc-200'
+            }`}
+          >
+            <Table2 className="w-4 h-4" />
+            Tabelle
+            <span className={`text-xs px-1.5 py-0.5 rounded-full ${activeTab === 'loot_table' ? 'bg-violet-800 text-violet-100' : 'bg-zinc-800 text-zinc-500'}`}>
+              {lootTableEntries.length}
+            </span>
+          </button>
+        )}
       </div>
 
-      {/* Formular */}
-      {showForm && (
+      {/* Formular — only when not on loot_table tab */}
+      {activeTab !== 'loot_table' && showForm && (
         <div className="bg-zinc-900 border border-zinc-800 rounded-xl p-4 space-y-3">
           <div className="flex items-center justify-between">
             <p className="text-sm font-semibold text-zinc-200">Neuer Loot-Eintrag</p>
@@ -409,101 +514,263 @@ export default function LootPage() {
         </div>
       )}
 
-      {/* Seltenheits-Filter */}
-      <div className="flex gap-2 flex-wrap">
-        <button
-          onClick={() => setFilterRarity('all')}
-          className={`px-3 py-1.5 rounded-lg text-xs font-medium transition-colors ${filterRarity === 'all' ? 'bg-amber-600 text-white' : 'bg-zinc-800 text-zinc-400 hover:bg-zinc-700'}`}
-        >
-          Alle ({tabItems.length})
-        </button>
-        {(Object.keys(RARITY_CONFIG) as LootRarity[]).map((r) => {
-          const cnt = tabItems.filter((i) => i.rarity === r).length
-          if (!cnt) return null
-          return (
-            <button
-              key={r}
-              onClick={() => setFilterRarity(r)}
-              className={`px-3 py-1.5 rounded-lg text-xs font-medium transition-colors ${filterRarity === r ? 'bg-amber-600 text-white' : 'bg-zinc-800 text-zinc-400 hover:bg-zinc-700'}`}
-            >
-              {RARITY_CONFIG[r].label} ({cnt})
-            </button>
-          )
-        })}
-      </div>
+      {/* Seltenheits-Filter — hidden on loot_table tab */}
+      {activeTab !== 'loot_table' && (
+        <div className="flex gap-2 flex-wrap">
+          <button
+            onClick={() => setFilterRarity('all')}
+            className={`px-3 py-1.5 rounded-lg text-xs font-medium transition-colors ${filterRarity === 'all' ? 'bg-amber-600 text-white' : 'bg-zinc-800 text-zinc-400 hover:bg-zinc-700'}`}
+          >
+            Alle ({tabItems.length})
+          </button>
+          {(Object.keys(RARITY_CONFIG) as LootRarity[]).map((r) => {
+            const cnt = tabItems.filter((i) => i.rarity === r).length
+            if (!cnt) return null
+            return (
+              <button
+                key={r}
+                onClick={() => setFilterRarity(r)}
+                className={`px-3 py-1.5 rounded-lg text-xs font-medium transition-colors ${filterRarity === r ? 'bg-amber-600 text-white' : 'bg-zinc-800 text-zinc-400 hover:bg-zinc-700'}`}
+              >
+                {RARITY_CONFIG[r].label} ({cnt})
+              </button>
+            )
+          })}
+        </div>
+      )}
 
-      {/* Tab-Beschreibung */}
-      {activeTab === 'personal' && !isGM && personalItems.length === 0 && (
+      {/* ── Loot-Tabellen-Editor (GM only) ─────────────────────────────── */}
+      {activeTab === 'loot_table' && isGM && (
+        <div className="space-y-4">
+          {/* Add/Edit form */}
+          <div className="flex items-center justify-between">
+            <p className="text-sm font-semibold text-zinc-300">
+              GM Loot-Tabelle — {lootTableEntries.length} Einträge
+            </p>
+            <button
+              onClick={() => { setShowEntryForm(v => !v); setEditingEntryId(null); setEntryForm(BLANK_ENTRY_FORM) }}
+              className="flex items-center gap-1.5 px-3 py-1.5 rounded-lg bg-violet-700 hover:bg-violet-600 text-xs font-semibold text-white transition-colors"
+            >
+              <Plus className="w-3.5 h-3.5" /> Neuer Eintrag
+            </button>
+          </div>
+
+          {showEntryForm && (
+            <div className="bg-zinc-900 border border-violet-700/50 rounded-xl p-4 space-y-3">
+              <p className="text-sm font-semibold text-violet-300">{editingEntryId ? 'Eintrag bearbeiten' : 'Neuer Loot-Tabellen-Eintrag'}</p>
+
+              <div className="grid grid-cols-2 gap-3">
+                <div className="col-span-2">
+                  <label className="text-xs text-zinc-500 mb-1 block">Item-Name *</label>
+                  <input
+                    type="text" placeholder="z.B. Sword of Flames"
+                    value={entryForm.name} onChange={e => setEntryForm(p => ({ ...p, name: e.target.value }))}
+                    className="w-full bg-zinc-800 border border-zinc-700 rounded-lg px-3 py-2 text-sm text-zinc-100 placeholder-zinc-500 focus:outline-none focus:border-violet-500"
+                  />
+                </div>
+                <div>
+                  <label className="text-xs text-zinc-500 mb-1 block">Kategorie</label>
+                  <select value={entryForm.category} onChange={e => setEntryForm(p => ({ ...p, category: e.target.value }))}
+                    className="w-full bg-zinc-800 border border-zinc-700 rounded-lg px-2 py-2 text-sm text-zinc-100 focus:outline-none focus:border-violet-500">
+                    {ENTRY_CATEGORIES.map(c => <option key={c} value={c}>{c}</option>)}
+                  </select>
+                </div>
+                <div>
+                  <label className="text-xs text-zinc-500 mb-1 block">Seltenheit</label>
+                  <select value={entryForm.rarity} onChange={e => setEntryForm(p => ({ ...p, rarity: e.target.value }))}
+                    className="w-full bg-zinc-800 border border-zinc-700 rounded-lg px-2 py-2 text-sm text-zinc-100 focus:outline-none focus:border-violet-500">
+                    {ENTRY_RARITIES.map(r => <option key={r.key} value={r.key}>{r.label}</option>)}
+                  </select>
+                </div>
+                <div>
+                  <label className="text-xs text-zinc-500 mb-1 block">Würfeltyp</label>
+                  <select value={entryForm.dice_type} onChange={e => setEntryForm(p => ({ ...p, dice_type: e.target.value }))}
+                    className="w-full bg-zinc-800 border border-zinc-700 rounded-lg px-2 py-2 text-sm text-zinc-100 focus:outline-none focus:border-violet-500">
+                    {['d4','d6','d8','d10','d12','d20','d100'].map(d => <option key={d} value={d}>{d}</option>)}
+                  </select>
+                </div>
+                <div className="grid grid-cols-2 gap-1.5">
+                  <div>
+                    <label className="text-xs text-zinc-500 mb-1 block">Min Wurf</label>
+                    <input type="number" min={1} value={entryForm.min_roll}
+                      onChange={e => setEntryForm(p => ({ ...p, min_roll: parseInt(e.target.value) || 1 }))}
+                      className="w-full bg-zinc-800 border border-zinc-700 rounded-lg px-2 py-2 text-sm text-zinc-100 text-center focus:outline-none focus:border-violet-500" />
+                  </div>
+                  <div>
+                    <label className="text-xs text-zinc-500 mb-1 block">Max Wurf</label>
+                    <input type="number" min={1} value={entryForm.max_roll}
+                      onChange={e => setEntryForm(p => ({ ...p, max_roll: parseInt(e.target.value) || 100 }))}
+                      className="w-full bg-zinc-800 border border-zinc-700 rounded-lg px-2 py-2 text-sm text-zinc-100 text-center focus:outline-none focus:border-violet-500" />
+                  </div>
+                </div>
+                <div className="col-span-2">
+                  <label className="text-xs text-zinc-500 mb-1 block">Voraussetzungen (optional)</label>
+                  <input type="text" placeholder="z.B. Nur in Dungeons, Spieler-Level ≥ 5..."
+                    value={entryForm.prerequisites} onChange={e => setEntryForm(p => ({ ...p, prerequisites: e.target.value }))}
+                    className="w-full bg-zinc-800 border border-zinc-700 rounded-lg px-3 py-2 text-sm text-zinc-100 placeholder-zinc-500 focus:outline-none focus:border-violet-500" />
+                </div>
+                <div className="col-span-2">
+                  <label className="text-xs text-zinc-500 mb-1 block">Beschreibung (optional)</label>
+                  <textarea rows={2} placeholder="Beschreibung des Items, Effekte, Notizen..."
+                    value={entryForm.description} onChange={e => setEntryForm(p => ({ ...p, description: e.target.value }))}
+                    className="w-full bg-zinc-800 border border-zinc-700 rounded-lg px-3 py-2 text-sm text-zinc-100 placeholder-zinc-500 focus:outline-none focus:border-violet-500 resize-none" />
+                </div>
+              </div>
+
+              <div className="flex gap-2 justify-end">
+                <button
+                  onClick={() => { setShowEntryForm(false); setEditingEntryId(null); setEntryForm(BLANK_ENTRY_FORM) }}
+                  className="px-3 py-1.5 rounded-lg bg-zinc-700 text-zinc-300 text-sm hover:text-zinc-100 transition-colors">
+                  Abbrechen
+                </button>
+                <button onClick={saveEntry} disabled={!entryForm.name.trim() || savingEntry}
+                  className="flex items-center gap-1.5 px-4 py-1.5 rounded-lg bg-violet-700 hover:bg-violet-600 disabled:opacity-50 text-white text-sm font-semibold transition-colors">
+                  <Save className="w-3.5 h-3.5" /> {editingEntryId ? 'Speichern' : 'Hinzufügen'}
+                </button>
+              </div>
+            </div>
+          )}
+
+          {/* Entry list */}
+          {lootTableEntries.length === 0 ? (
+            <div className="text-center text-zinc-600 py-12">
+              <Table2 className="w-10 h-10 mx-auto mb-3 opacity-30" />
+              <p className="text-sm">Noch keine Loot-Tabellen-Einträge.</p>
+              <p className="text-xs mt-1">Füge eigene Items hinzu, die beim Würfeln erscheinen sollen.</p>
+            </div>
+          ) : (
+            <div className="space-y-1.5">
+              {/* Group by category */}
+              {ENTRY_CATEGORIES.filter(cat => lootTableEntries.some(e => e.category === cat)).map(cat => (
+                <div key={cat} className="bg-zinc-900 border border-zinc-800 rounded-xl overflow-hidden">
+                  <div className="px-4 py-2.5 bg-zinc-800/60 border-b border-zinc-700">
+                    <p className="text-xs font-bold text-zinc-300 uppercase tracking-wide">{cat}</p>
+                  </div>
+                  <div className="divide-y divide-zinc-800/60">
+                    {lootTableEntries.filter(e => e.category === cat).map(entry => {
+                      const rarityLabel = ENTRY_RARITIES.find(r => r.key === entry.rarity)?.label ?? entry.rarity
+                      const rarityColor =
+                        entry.rarity === 'legendary' ? 'text-amber-300' :
+                        entry.rarity === 'very_rare' ? 'text-purple-300' :
+                        entry.rarity === 'rare'      ? 'text-blue-300' :
+                        entry.rarity === 'uncommon'  ? 'text-green-300' : 'text-zinc-400'
+                      return (
+                        <div key={entry.id} className={`flex items-start gap-3 px-4 py-3 hover:bg-zinc-800/30 transition-colors ${!entry.is_active ? 'opacity-50' : ''}`}>
+                          <div className="flex-1 min-w-0">
+                            <div className="flex items-center gap-2 flex-wrap">
+                              <span className="text-sm font-semibold text-zinc-100">{entry.name}</span>
+                              <span className={`text-[11px] font-medium ${rarityColor}`}>{rarityLabel}</span>
+                              <span className="text-[11px] text-zinc-600 bg-zinc-800 rounded px-1.5 py-0.5 font-mono">
+                                {entry.dice_type} {entry.min_roll}–{entry.max_roll}
+                              </span>
+                            </div>
+                            {entry.prerequisites && (
+                              <p className="text-[11px] text-amber-400/70 mt-0.5">⚠️ {entry.prerequisites}</p>
+                            )}
+                            {entry.description && (
+                              <p className="text-xs text-zinc-500 mt-0.5 line-clamp-2">{entry.description}</p>
+                            )}
+                          </div>
+                          <div className="flex items-center gap-1.5 flex-shrink-0 mt-0.5">
+                            <button onClick={() => toggleEntryActive(entry.id, entry.is_active)}
+                              title={entry.is_active ? 'Deaktivieren' : 'Aktivieren'}
+                              className={`p-1 rounded transition-colors ${entry.is_active ? 'text-emerald-400 hover:text-emerald-300' : 'text-zinc-600 hover:text-zinc-400'}`}>
+                              {entry.is_active ? <ToggleRight className="w-4 h-4" /> : <ToggleLeft className="w-4 h-4" />}
+                            </button>
+                            <button onClick={() => startEditEntry(entry)}
+                              className="p-1 text-zinc-500 hover:text-violet-400 transition-colors">
+                              <Edit2 className="w-3.5 h-3.5" />
+                            </button>
+                            <button onClick={() => deleteEntry(entry.id)}
+                              className="p-1 text-zinc-600 hover:text-red-400 transition-colors">
+                              <Trash2 className="w-3.5 h-3.5" />
+                            </button>
+                          </div>
+                        </div>
+                      )
+                    })}
+                  </div>
+                </div>
+              ))}
+            </div>
+          )}
+        </div>
+      )}
+
+      {/* Tab-Beschreibung + item list — hidden on loot_table tab */}
+      {activeTab !== 'loot_table' && activeTab === 'personal' && !isGM && personalItems.length === 0 && (
         <div className="text-center text-zinc-600 py-10">
           <User className="w-10 h-10 mx-auto mb-3 opacity-30" />
           <p className="text-sm">Dir wurde noch kein Loot zugewiesen.</p>
         </div>
       )}
 
-      {/* Liste */}
-      {displayItems.length === 0 && !(activeTab === 'personal' && !isGM && personalItems.length === 0) ? (
-        <div className="text-center text-zinc-600 py-16">
-          <Backpack className="w-10 h-10 mx-auto mb-3 opacity-30" />
-          <p className="text-sm">
-            {activeTab === 'group' ? 'Kein Gruppen-Loot vorhanden.' : 'Kein zugewiesener Loot.'}
-          </p>
-        </div>
-      ) : (
-        <div className="space-y-2">
-          {displayItems.map((item) => {
-            const rCfg = RARITY_CONFIG[item.rarity ?? 'common']
-            const canDelete = isGM || item.created_by === user?.id
-            const canAssign = isGM || item.created_by === user?.id
-            return (
-              <div key={item.id} className={`border rounded-xl p-4 flex items-start gap-4 transition-all ${rCfg.border} ${rCfg.bg} ${rCfg.glow}`}>
-                {/* Icon */}
-                <div className="text-3xl flex-shrink-0 mt-0.5">
-                  {(item as any).icon ?? '📦'}
-                </div>
+      {/* Liste — hidden on loot_table tab */}
+      {activeTab !== 'loot_table' && (
+        displayItems.length === 0 && !(activeTab === 'personal' && !isGM && personalItems.length === 0) ? (
+          <div className="text-center text-zinc-600 py-16">
+            <Backpack className="w-10 h-10 mx-auto mb-3 opacity-30" />
+            <p className="text-sm">
+              {activeTab === 'group' ? 'Kein Gruppen-Loot vorhanden.' : 'Kein zugewiesener Loot.'}
+            </p>
+          </div>
+        ) : (
+          <div className="space-y-2">
+            {displayItems.map((item) => {
+              const rCfg = RARITY_CONFIG[item.rarity ?? 'common']
+              const canDelete = isGM || item.created_by === user?.id
+              const canAssign = isGM || item.created_by === user?.id
+              return (
+                <div key={item.id} className={`border rounded-xl p-4 flex items-start gap-4 transition-all ${rCfg.border} ${rCfg.bg} ${rCfg.glow}`}>
+                  {/* Icon */}
+                  <div className="text-3xl flex-shrink-0 mt-0.5">
+                    {(item as any).icon ?? '📦'}
+                  </div>
 
-                <div className="flex-1 min-w-0">
-                  <div className="flex items-start justify-between gap-2">
-                    <div>
-                      <div className="flex items-center gap-2 flex-wrap">
-                        <p className={`text-sm font-bold ${rCfg.text}`}>
-                          {item.quantity > 1 && <span className="text-amber-400 mr-1">{item.quantity}×</span>}
-                          {item.name}
-                        </p>
-                        <span className={`text-xs px-2 py-0.5 rounded-full border ${rCfg.border} ${rCfg.text} opacity-80`}>
-                          {rCfg.label}
-                        </span>
+                  <div className="flex-1 min-w-0">
+                    <div className="flex items-start justify-between gap-2">
+                      <div>
+                        <div className="flex items-center gap-2 flex-wrap">
+                          <p className={`text-sm font-bold ${rCfg.text}`}>
+                            {item.quantity > 1 && <span className="text-amber-400 mr-1">{item.quantity}×</span>}
+                            {item.name}
+                          </p>
+                          <span className={`text-xs px-2 py-0.5 rounded-full border ${rCfg.border} ${rCfg.text} opacity-80`}>
+                            {rCfg.label}
+                          </span>
+                        </div>
+                        {item.description && <p className="text-xs text-zinc-500 mt-0.5">{item.description}</p>}
                       </div>
-                      {item.description && <p className="text-xs text-zinc-500 mt-0.5">{item.description}</p>}
+                      {canDelete && (
+                        <button onClick={() => handleDelete(item.id)} className="text-zinc-700 hover:text-red-400 flex-shrink-0 transition-colors">
+                          <Trash2 className="w-3.5 h-3.5" />
+                        </button>
+                      )}
                     </div>
-                    {canDelete && (
-                      <button onClick={() => handleDelete(item.id)} className="text-zinc-700 hover:text-red-400 flex-shrink-0 transition-colors">
-                        <Trash2 className="w-3.5 h-3.5" />
-                      </button>
-                    )}
-                  </div>
 
-                  <div className="flex items-center gap-3 mt-2 flex-wrap">
-                    <span className="text-xs text-zinc-600">Von: {(item.creator as any)?.username ?? '?'}</span>
-                    {canAssign ? (
-                      <select
-                        value={(item.assigned_profile as any)?.id ?? ''}
-                        onChange={(e) => handleAssign(item.id, e.target.value)}
-                        className="text-xs bg-zinc-800/50 border border-zinc-700 rounded px-2 py-1 text-zinc-300 focus:outline-none focus:border-amber-500"
-                      >
-                        <option value="">Gruppen-Loot</option>
-                        {profiles.map((p) => <option key={p.id} value={p.id}>{p.username}</option>)}
-                      </select>
-                    ) : activeTab === 'personal' ? (
-                      <span className={`text-xs font-medium ${rCfg.text}`}>
-                        → {(item.assigned_profile as any)?.username ?? '?'}
-                      </span>
-                    ) : null}
+                    <div className="flex items-center gap-3 mt-2 flex-wrap">
+                      <span className="text-xs text-zinc-600">Von: {(item.creator as any)?.username ?? '?'}</span>
+                      {canAssign ? (
+                        <select
+                          value={(item.assigned_profile as any)?.id ?? ''}
+                          onChange={(e) => handleAssign(item.id, e.target.value)}
+                          className="text-xs bg-zinc-800/50 border border-zinc-700 rounded px-2 py-1 text-zinc-300 focus:outline-none focus:border-amber-500"
+                        >
+                          <option value="">Gruppen-Loot</option>
+                          {profiles.map((p) => <option key={p.id} value={p.id}>{p.username}</option>)}
+                        </select>
+                      ) : activeTab === 'personal' ? (
+                        <span className={`text-xs font-medium ${rCfg.text}`}>
+                          → {(item.assigned_profile as any)?.username ?? '?'}
+                        </span>
+                      ) : null}
+                    </div>
                   </div>
                 </div>
-              </div>
-            )
-          })}
-        </div>
+              )
+            })}
+          </div>
+        )
       )}
     </div>
   )
