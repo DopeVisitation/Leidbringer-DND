@@ -5,9 +5,9 @@ import {
   Map as MapIcon, Plus, Trash2, X, Eye, EyeOff, Shield, Heart, Zap,
   Edit2, Save, Bookmark, SlidersHorizontal,
   ChevronDown, ChevronRight, Lock, Unlock, Check, RotateCcw,
-  Flame, Move, Footprints, Skull, ArrowUp, ArrowDown,
+  Flame, Move, Footprints, Skull, ArrowUp, ArrowDown, ArrowLeft, ArrowRight,
   Timer, Play, Pause, SkipForward, SkipBack, Cloud, BookmarkCheck,
-  ZoomIn, ZoomOut, ChevronLeft, ChevronRight as ChevronRightIcon, Layers,
+  ZoomIn, ZoomOut, ChevronLeft, ChevronRight as ChevronRightIcon, Layers, Dices,
 } from 'lucide-react'
 import { createClient } from '@/lib/supabase/client'
 import { useAuth } from '@/lib/hooks/useAuth'
@@ -1047,6 +1047,10 @@ export default function BattleMapPage() {
   const [myFavorites, setMyFavorites] = useState<DiceFavorite[]>([])
   const [gmRollsVisible, setGmRollsVisible] = useState(true)
   const [myTokenInitial, setMyTokenInitial] = useState<Partial<typeof BLANK_TOKEN_FORM>>({ token_type: 'player', icon: '🧙' })
+  // Quick Dice
+  const [showQuickDice, setShowQuickDice] = useState(false)
+  const [quickDiceCfg, setQuickDiceCfg] = useState<{ type: string; count: number; damageType: string; modifier: number }>({ type: 'd20', count: 1, damageType: '', modifier: 0 })
+  const [quickDiceResult, setQuickDiceResult] = useState<{ rolls: number[]; total: number; label: string } | null>(null)
   const [hoverCoord, setHoverCoord] = useState<{col:number;row:number} | null>(null)
 
   // Fog of War
@@ -2354,11 +2358,26 @@ export default function BattleMapPage() {
         <span className="text-sm font-bold text-zinc-300 tracking-wide">Spielfeld</span>
 
         {maps.length > 0 && (
-          <select className="bg-zinc-800/80 border border-zinc-700 rounded px-2 py-1 text-xs text-zinc-300 focus:outline-none"
-            value={activeMap?.id ?? ''}
-            onChange={e => { const m = maps.find(x => x.id === e.target.value); if (m) setActiveMap(m) }}>
-            {maps.map(m => <option key={m.id} value={m.id}>{m.name}</option>)}
-          </select>
+          <div className="flex items-center gap-1">
+            <select className="bg-zinc-800/80 border border-zinc-700 rounded px-2 py-1 text-xs text-zinc-300 focus:outline-none"
+              value={activeMap?.id ?? ''}
+              onChange={e => { const m = maps.find(x => x.id === e.target.value); if (m) setActiveMap(m) }}>
+              {maps.map(m => <option key={m.id} value={m.id}>{m.name}</option>)}
+            </select>
+            {isGM && activeMap && (
+              <button
+                onClick={async () => {
+                  if (!confirm(`Karte "${activeMap.name}" wirklich löschen?`)) return
+                  await supabase.from('battle_maps').delete().eq('id', activeMap.id)
+                  setActiveMap(null)
+                  loadMaps()
+                }}
+                className="p-1.5 rounded bg-zinc-800/80 border border-zinc-700/60 text-zinc-600 hover:text-red-500 hover:border-red-800/60"
+                title="Aktive Karte löschen">
+                <Trash2 className="w-3 h-3" />
+              </button>
+            )}
+          </div>
         )}
 
         <div className="flex gap-1.5 flex-wrap items-center">
@@ -2456,7 +2475,24 @@ export default function BattleMapPage() {
                 className="px-2 py-1 rounded bg-zinc-800/80 border border-zinc-700/60 text-[10px] text-zinc-500 hover:text-zinc-300" title="Zoom zurücksetzen">
                 1:1
               </button>
+              {/* Pan arrow buttons */}
+              <div className="flex items-center gap-0.5 ml-1 border border-zinc-700/60 rounded overflow-hidden">
+                <button onClick={() => setPanX(x => x + 120)} className="p-1.5 bg-zinc-800/80 text-zinc-500 hover:text-zinc-300 hover:bg-zinc-700/60" title="Links scrollen"><ArrowLeft className="w-3 h-3" /></button>
+                <button onClick={() => setPanY(y => y + 120)} className="p-1.5 bg-zinc-800/80 text-zinc-500 hover:text-zinc-300 hover:bg-zinc-700/60" title="Oben scrollen"><ArrowUp className="w-3 h-3" /></button>
+                <button onClick={() => setPanY(y => y - 120)} className="p-1.5 bg-zinc-800/80 text-zinc-500 hover:text-zinc-300 hover:bg-zinc-700/60" title="Unten scrollen"><ArrowDown className="w-3 h-3" /></button>
+                <button onClick={() => setPanX(x => x - 120)} className="p-1.5 bg-zinc-800/80 text-zinc-500 hover:text-zinc-300 hover:bg-zinc-700/60" title="Rechts scrollen"><ArrowRight className="w-3 h-3" /></button>
+              </div>
             </div>
+          )}
+
+          {/* Quick Dice button — visible for everyone */}
+          {activeMap && (
+            <button
+              onClick={() => { setShowQuickDice(v => !v); setQuickDiceResult(null) }}
+              className={`flex items-center gap-1 px-2 py-1.5 rounded border text-xs transition-colors ${showQuickDice ? 'bg-amber-900/40 border-amber-700/60 text-amber-300' : 'bg-zinc-800/80 border-zinc-700/60 text-zinc-400 hover:text-zinc-200'}`}
+              title="Würfelwurf">
+              <Dices className="w-3 h-3" /> Würfeln
+            </button>
           )}
 
           {isGM && activeMap && (
@@ -2513,6 +2549,82 @@ export default function BattleMapPage() {
           </div>
           {!activeMap.grid_locked && (
             <p className="text-xs text-amber-600/80">Gitter entsperrt — ziehe den Griff unten rechts. Das Bild bleibt fixiert; nur die Gitterteilung ändert sich.</p>
+          )}
+        </div>
+      )}
+
+      {/* ── Quick Dice Panel ── */}
+      {showQuickDice && activeMap && (
+        <div className="flex-shrink-0 px-4 py-3 bg-zinc-900/90 border-b border-amber-900/40 flex flex-wrap items-center gap-3">
+          <Dices className="w-4 h-4 text-amber-400 flex-shrink-0" />
+          <span className="text-xs font-semibold text-amber-300">Würfelwurf</span>
+          {/* Count */}
+          <div className="flex items-center gap-1">
+            <label className="text-[10px] text-zinc-500">Anzahl</label>
+            <input type="number" min={1} max={20} value={quickDiceCfg.count}
+              onChange={e => setQuickDiceCfg(c => ({ ...c, count: Math.max(1, parseInt(e.target.value) || 1) }))}
+              className="w-12 bg-zinc-800 border border-zinc-700 rounded px-1.5 py-1 text-xs text-zinc-100 text-center focus:outline-none" />
+          </div>
+          {/* Dice type */}
+          <div className="flex gap-1">
+            {(['d4','d6','d8','d10','d12','d20'] as const).map(d => (
+              <button key={d} onClick={() => setQuickDiceCfg(c => ({ ...c, type: d }))}
+                className={`px-2 py-1 rounded text-[11px] font-bold border transition-colors ${quickDiceCfg.type === d ? 'bg-amber-700 border-amber-600 text-amber-100' : 'bg-zinc-800 border-zinc-700 text-zinc-400 hover:text-zinc-200'}`}>
+                {d}
+              </button>
+            ))}
+          </div>
+          {/* Damage type */}
+          <select value={quickDiceCfg.damageType} onChange={e => setQuickDiceCfg(c => ({ ...c, damageType: e.target.value }))}
+            className="bg-zinc-800 border border-zinc-700 rounded px-2 py-1 text-xs text-zinc-300 focus:outline-none">
+            {DMG_TYPES_LIST.map(t => <option key={t} value={t}>{t === '' ? '— Schadensart —' : t}</option>)}
+          </select>
+          {/* Modifier */}
+          <div className="flex items-center gap-1">
+            <label className="text-[10px] text-zinc-500">Mod</label>
+            <input type="number" value={quickDiceCfg.modifier}
+              onChange={e => setQuickDiceCfg(c => ({ ...c, modifier: parseInt(e.target.value) || 0 }))}
+              className="w-14 bg-zinc-800 border border-zinc-700 rounded px-1.5 py-1 text-xs text-zinc-100 text-center focus:outline-none" />
+          </div>
+          {/* GM: visibility toggle */}
+          {isGM && (
+            <button onClick={() => setGmRollsVisible(v => !v)}
+              className={`px-2 py-1 rounded text-[10px] border transition-colors ${gmRollsVisible ? 'bg-emerald-900/30 border-emerald-700/50 text-emerald-300' : 'bg-zinc-800 border-zinc-700 text-zinc-500'}`}
+              title="Würfe für Spieler sichtbar?">
+              {gmRollsVisible ? '👁 Sichtbar' : '🙈 Versteckt'}
+            </button>
+          )}
+          {/* Roll button */}
+          <button
+            onClick={async () => {
+              const sides = parseInt(quickDiceCfg.type.slice(1))
+              const rolls = Array.from({ length: quickDiceCfg.count }, () => Math.floor(Math.random() * sides) + 1)
+              const total = rolls.reduce((s, n) => s + n, 0) + quickDiceCfg.modifier
+              const dmgLabel = quickDiceCfg.damageType ? ` (${quickDiceCfg.damageType})` : ''
+              const lbl = `${quickDiceCfg.count}${quickDiceCfg.type}${quickDiceCfg.modifier !== 0 ? (quickDiceCfg.modifier > 0 ? `+${quickDiceCfg.modifier}` : quickDiceCfg.modifier) : ''}${dmgLabel}`
+              setQuickDiceResult({ rolls, total, label: lbl })
+              if (user) {
+                await supabase.from('dice_rolls').insert({
+                  user_id: user.id,
+                  dice_config: [{ type: quickDiceCfg.type, count: quickDiceCfg.count, damageType: quickDiceCfg.damageType || undefined }],
+                  results: [rolls],
+                  total,
+                  label: lbl,
+                  visible_to_players: isGM ? gmRollsVisible : true,
+                })
+              }
+            }}
+            className="px-3 py-1.5 rounded bg-amber-700 hover:bg-amber-600 text-xs font-bold text-white">
+            🎲 Würfeln
+          </button>
+          {/* Result display */}
+          {quickDiceResult && (
+            <div className="flex items-center gap-2 px-3 py-1.5 rounded-lg bg-zinc-800 border border-amber-700/40">
+              <span className="text-[10px] text-zinc-500">{quickDiceResult.label}:</span>
+              <span className="text-xs text-zinc-400">[{quickDiceResult.rolls.join(', ')}]</span>
+              {quickDiceCfg.modifier !== 0 && <span className="text-xs text-zinc-500">{quickDiceCfg.modifier > 0 ? '+' : ''}{quickDiceCfg.modifier}</span>}
+              <span className="text-base font-black text-amber-400">{quickDiceResult.total}</span>
+            </div>
           )}
         </div>
       )}
@@ -3875,9 +3987,9 @@ export default function BattleMapPage() {
                   width: activeMap.grid_cols * cs + ox,
                   height: activeMap.grid_rows * cs + oy,
                   backgroundImage: activeMap.image_url
-                    ? `url(${activeMap.image_url})`
+                    ? `url("${activeMap.image_url}")`
                     : 'linear-gradient(160deg, #0c0008 0%, #050010 40%, #0a0005 70%, #000000 100%)',
-                  backgroundSize: '100% 100%', backgroundPosition: 'top left',
+                  backgroundSize: 'cover', backgroundPosition: 'center',
                   cursor: rulerMode ? 'crosshair' : fogMode ? 'crosshair' : terrainMode ? 'crosshair' : effectMode ? 'cell' : moveMode ? 'pointer' : dragRender ? 'grabbing' : 'default',
                 }}
                 onClick={handleGridClick}

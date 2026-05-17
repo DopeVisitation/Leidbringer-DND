@@ -120,19 +120,23 @@ export default function SummariesPage() {
       setComments(map)
     }
     setLoading(false)
-  }, [supabase])
+  }, [supabase, isGM])
 
   useEffect(() => {
     loadAll()
-    const ch1 = supabase.channel('summaries_v9')
+    const ch1 = supabase.channel('summaries_v10')
       .on('postgres_changes', { event: '*', schema: 'public', table: 'session_summaries' }, loadAll)
       .subscribe()
-    const ch2 = supabase.channel('summary_comments_v9')
+    const ch2 = supabase.channel('summary_comments_v10')
       .on('postgres_changes', { event: '*', schema: 'public', table: 'session_summary_comments' }, loadAll)
+      .subscribe()
+    const ch3 = supabase.channel('sessions_confirmed_v10')
+      .on('postgres_changes', { event: 'UPDATE', schema: 'public', table: 'sessions' }, loadAll)
       .subscribe()
     return () => {
       supabase.removeChannel(ch1)
       supabase.removeChannel(ch2)
+      supabase.removeChannel(ch3)
     }
   }, [loadAll, supabase])
 
