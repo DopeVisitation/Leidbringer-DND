@@ -1,0 +1,6 @@
+# Exclude locally-extracted map files from Vercel deployment.
+# The maps folder contains ~400 files (~1.9 GB) extracted locally
+# but only 1 file is committed to git. Vercel CLI would upload all
+# local files — use this to prevent the 1.9 GB upload.
+# Token images (creatures/assets) are small enough (~47 MB) and stay included.
+public/tokens/maps/
