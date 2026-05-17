@@ -93,6 +93,7 @@ interface PlacedModel {
   notes: string | null
   favorite_dice: any[]
   abilities: any[]
+  conditions: string[]
 }
 
 interface PlacedAsset {
@@ -476,7 +477,7 @@ function TokenPiece({ token, selected, cellSize, isMoving, isDragged, isActiveTu
       {isActiveTurn && (
         <div className="absolute -top-1 -right-1 w-3 h-3 bg-amber-400 rounded-full animate-pulse" />
       )}
-      {token.icon?.startsWith('http') ? (
+      {(token.icon?.startsWith('http') || token.icon?.startsWith('/')) ? (
         // eslint-disable-next-line @next/next/no-img-element
         <img src={token.icon} alt={token.name}
           style={{ width: pixW - 6, height: pixH - 6, objectFit: 'cover', borderRadius: '50%' }} />
@@ -567,7 +568,7 @@ function TokenPanel({ token, onUpdate, onDelete, onClose, onEdit, isGM, myFavori
     <div className="bg-zinc-950 border border-zinc-800 rounded-xl p-4 space-y-3 w-72">
       {/* Header */}
       <div className="flex items-center gap-2">
-        {token.icon?.startsWith('http') ? (
+        {(token.icon?.startsWith('http') || token.icon?.startsWith('/')) ? (
           // eslint-disable-next-line @next/next/no-img-element
           <img src={token.icon} alt={token.name} className="w-8 h-8 rounded-full object-cover flex-shrink-0" />
         ) : (
@@ -996,6 +997,11 @@ export default function BattleMapPage() {
   // Map form preset gallery
   const [mapPresets, setMapPresets] = useState<TokenImage[]>([])
   const [mapPresetsLoaded, setMapPresetsLoaded] = useState(false)
+  const [mapPresetSearch, setMapPresetSearch] = useState('')
+  const [mapGalleryTab, setMapGalleryTab] = useState<'all' | 'favorites'>('all')
+  const [mapFavorites, setMapFavorites] = useState<string[]>(() => {
+    try { return JSON.parse(localStorage.getItem('mapFavorites') ?? '[]') } catch { return [] }
+  })
 
   // Drag & Drop – all drag state in ref to avoid stale closures
   const dragStateRef = useRef<{
@@ -1392,7 +1398,7 @@ export default function BattleMapPage() {
   // ── V20: Load models & assets ──
   const loadPlacedModels = useCallback(async (mapId: string) => {
     const { data } = await supabase.from('battle_placed_models').select('*').eq('map_id', mapId).order('z_index')
-    setPlacedModels((data ?? []) as PlacedModel[])
+    setPlacedModels((data ?? []).map((m: any) => ({ ...m, conditions: m.conditions ?? [] })) as PlacedModel[])
   }, [supabase])
 
   const loadPlacedAssets = useCallback(async (mapId: string) => {
@@ -1418,6 +1424,14 @@ export default function BattleMapPage() {
     setMapPresets(json.images ?? [])
     setMapPresetsLoaded(true)
   }, [])
+
+  const toggleMapFavorite = (filename: string) => {
+    setMapFavorites(prev => {
+      const next = prev.includes(filename) ? prev.filter(f => f !== filename) : [...prev, filename]
+      localStorage.setItem('mapFavorites', JSON.stringify(next))
+      return next
+    })
+  }
 
   // ── V20: Model overlap check ──
   const modelOverlaps = (col: number, row: number, span: number, excludeId?: string): boolean => {
@@ -1490,6 +1504,12 @@ export default function BattleMapPage() {
       await supabase.from('companion_characters').update({ abilities }).eq('id', model.companion_id)
     }
     setPlacedModels(prev => prev.map(x => x.id === modelId ? { ...x, abilities } : x))
+  }
+
+  // ── V21: Generic model update ──
+  const updateModel = async (id: string, patch: Partial<PlacedModel>) => {
+    await supabase.from('battle_placed_models').update(patch).eq('id', id)
+    setPlacedModels(prev => prev.map(m => m.id === id ? { ...m, ...patch } : m))
   }
 
   // ── V20: Place asset on map (free position) ──
@@ -2444,18 +2464,56 @@ export default function BattleMapPage() {
               <div className="mt-1">
                 {newMapForm.image_url && mapPresets.some(img => img.url === newMapForm.image_url) && (
                   /* eslint-disable-next-line @next/next/no-img-element */
-                  <img src={newMapForm.image_url} alt="Vorschau" className="w-full aspect-video object-cover rounded-lg border border-amber-500 mb-2" />
+                  <img src={newMapForm.image_url} alt="Vorschau" className="w-full aspect-[4/3] max-h-48 object-contain rounded-lg border border-amber-500 mb-2" />
                 )}
-                <div className="grid grid-cols-3 gap-2 max-h-40 overflow-y-auto">
-                  {mapPresets.map(img => (
-                    <button key={img.filename} onClick={() => setNewMapForm(f => ({ ...f, image_url: img.url, name: f.name || img.name }))}
-                      title={img.name}
-                      className={`relative rounded overflow-hidden border transition-all ${newMapForm.image_url === img.url ? 'border-amber-500' : 'border-zinc-700/60 hover:border-zinc-500'}`}>
-                      {/* eslint-disable-next-line @next/next/no-img-element */}
-                      <img src={img.url} alt={img.name} className="w-full aspect-video object-cover rounded" />
-                      <div className="absolute inset-x-0 bottom-0 bg-black/60 text-[8px] text-zinc-200 truncate px-0.5">{img.name}</div>
-                    </button>
-                  ))}
+                {/* Tab bar */}
+                <div className="flex gap-1 mb-2">
+                  <button onClick={() => setMapGalleryTab('all')}
+                    className={`px-2 py-1 rounded text-[10px] font-semibold border transition-colors ${mapGalleryTab === 'all' ? 'bg-zinc-700 border-zinc-500 text-zinc-100' : 'bg-zinc-800 border-zinc-700 text-zinc-500 hover:text-zinc-300'}`}>
+                    Alle ({mapPresets.length})
+                  </button>
+                  <button onClick={() => setMapGalleryTab('favorites')}
+                    className={`px-2 py-1 rounded text-[10px] font-semibold border transition-colors ${mapGalleryTab === 'favorites' ? 'bg-zinc-700 border-zinc-500 text-zinc-100' : 'bg-zinc-800 border-zinc-700 text-zinc-500 hover:text-zinc-300'}`}>
+                    ⭐ Favoriten ({mapFavorites.length})
+                  </button>
+                </div>
+                {/* Search */}
+                <input
+                  type="text"
+                  placeholder="Karte suchen…"
+                  value={mapPresetSearch}
+                  onChange={e => setMapPresetSearch(e.target.value)}
+                  className="w-full bg-zinc-900 border border-zinc-700 rounded-lg px-3 py-1.5 text-xs text-zinc-100 placeholder-zinc-600 focus:outline-none focus:border-amber-500 mb-2"
+                />
+                {/* Grid */}
+                <div className="grid grid-cols-4 gap-2 max-h-80 overflow-y-auto">
+                  {(() => {
+                    const filtered = mapPresets.filter(img =>
+                      img.name.toLowerCase().includes(mapPresetSearch.toLowerCase()) &&
+                      (mapGalleryTab === 'all' || mapFavorites.includes(img.filename))
+                    )
+                    const sorted = [
+                      ...filtered.filter(img => mapFavorites.includes(img.filename)),
+                      ...filtered.filter(img => !mapFavorites.includes(img.filename)),
+                    ]
+                    return sorted.map(img => (
+                      <div key={img.filename} className="relative">
+                        <button onClick={() => setNewMapForm(f => ({ ...f, image_url: img.url, name: f.name || img.name }))}
+                          title={img.name}
+                          className={`w-full relative rounded overflow-hidden border transition-all ${newMapForm.image_url === img.url ? 'border-amber-500' : 'border-zinc-700/60 hover:border-zinc-500'}`}>
+                          {/* eslint-disable-next-line @next/next/no-img-element */}
+                          <img src={img.url} alt={img.name} className="w-full aspect-video object-cover rounded" />
+                          <div className="absolute inset-x-0 bottom-0 bg-black/60 text-[8px] text-zinc-200 truncate px-0.5">{img.name}</div>
+                        </button>
+                        <button
+                          onClick={e => { e.stopPropagation(); toggleMapFavorite(img.filename) }}
+                          className="absolute top-0.5 right-0.5 w-4 h-4 flex items-center justify-center rounded-full bg-black/60 text-[10px] hover:bg-black/90 z-10"
+                          title={mapFavorites.includes(img.filename) ? 'Aus Favoriten entfernen' : 'Zu Favoriten'}>
+                          {mapFavorites.includes(img.filename) ? '⭐' : '☆'}
+                        </button>
+                      </div>
+                    ))
+                  })()}
                 </div>
               </div>
             )}
@@ -2977,7 +3035,7 @@ export default function BattleMapPage() {
                         <div className="w-7 h-7 rounded flex items-center justify-center bg-zinc-800/80 border border-zinc-700/60 flex-shrink-0">
                           <span className="text-xs font-bold text-amber-500">{modSign(t.initiative ?? 0)}</span>
                         </div>
-                        {t.icon?.startsWith('http') ? (
+                        {(t.icon?.startsWith('http') || t.icon?.startsWith('/')) ? (
                           // eslint-disable-next-line @next/next/no-img-element
                           <img src={t.icon} alt={t.name} className="w-6 h-6 rounded-full object-cover flex-shrink-0" />
                         ) : (
@@ -3156,7 +3214,7 @@ export default function BattleMapPage() {
                         }`}
                         onClick={() => setSelectedToken(t.id === selectedToken ? null : t.id)}>
                         <div className="flex items-center gap-1.5 mb-1">
-                          {t.icon?.startsWith('http') ? (
+                          {(t.icon?.startsWith('http') || t.icon?.startsWith('/')) ? (
                             // eslint-disable-next-line @next/next/no-img-element
                             <img src={t.icon} alt={t.name} className="w-5 h-5 rounded-full object-cover flex-shrink-0" />
                           ) : (
@@ -3493,7 +3551,7 @@ export default function BattleMapPage() {
                   backgroundImage: activeMap.image_url
                     ? `url(${activeMap.image_url})`
                     : 'linear-gradient(160deg, #0c0008 0%, #050010 40%, #0a0005 70%, #000000 100%)',
-                  backgroundSize: 'cover', backgroundPosition: 'center',
+                  backgroundSize: '100% 100%', backgroundPosition: 'top left',
                   cursor: fogMode ? 'crosshair' : terrainMode ? 'crosshair' : effectMode ? 'cell' : moveMode ? 'pointer' : dragRender ? 'grabbing' : 'default',
                 }}
                 onClick={handleGridClick}
@@ -3653,7 +3711,7 @@ export default function BattleMapPage() {
                       cursor: isGM ? 'pointer' : 'default',
                       opacity: m.is_hidden ? 0.35 : 1,
                     }}
-                      onClick={e => { if (isGM) { e.stopPropagation(); setSelectedModelId(m.id === selectedModelId ? null : m.id) } }}>
+                      onClick={e => { if (isGM) { e.stopPropagation(); setSelectedModelId(m.id === selectedModelId ? null : m.id); setSelectedToken(null) } }}>
                       {/* eslint-disable-next-line @next/next/no-img-element */}
                       <img src={m.image_url} alt={m.name}
                         style={{ width: '100%', height: '100%', objectFit: 'contain', userSelect: 'none',
@@ -3864,8 +3922,8 @@ export default function BattleMapPage() {
               )}
             </div>
 
-            {/* Right Panel */}
-            {sel && (
+            {/* Right Panel — Token */}
+            {sel && !selectedModelId && (
               <div className="flex-shrink-0 w-72 overflow-y-auto p-3 border-l border-zinc-800/80 bg-zinc-950">
                 <TokenPanel
                   token={sel}
@@ -3888,6 +3946,210 @@ export default function BattleMapPage() {
                 />
               </div>
             )}
+
+            {/* Right Panel — Model */}
+            {selectedModelId && (() => {
+              const selModel = placedModels.find(m => m.id === selectedModelId)
+              if (!selModel) return null
+              const hpPct = selModel.max_hp != null
+                ? Math.max(0, Math.min(1, (selModel.current_hp ?? selModel.max_hp) / selModel.max_hp)) : null
+              const hpColor = hpPct == null ? '' : hpPct > 0.6 ? '#4ade80' : hpPct > 0.3 ? '#facc15' : '#f87171'
+              const activeConds = CONDITIONS.filter(c => (selModel.conditions ?? []).includes(c.id))
+              const availConds = CONDITIONS.filter(c => !(selModel.conditions ?? []).includes(c.id))
+              return (
+                <div className="flex-shrink-0 w-72 overflow-y-auto p-3 border-l border-zinc-800/80 bg-zinc-950">
+                  <div className="bg-zinc-950 border border-zinc-800 rounded-xl p-4 space-y-3">
+                    {/* Header */}
+                    <div className="flex items-center gap-2">
+                      {/* eslint-disable-next-line @next/next/no-img-element */}
+                      <img src={selModel.image_url} alt={selModel.name} className="w-10 h-10 object-contain rounded border border-zinc-700 flex-shrink-0" />
+                      <div className="flex-1 min-w-0">
+                        <p className="font-bold text-zinc-100 truncate">{selModel.name}</p>
+                        <p className="text-xs text-zinc-500">Modell · {selModel.span}×{selModel.span}</p>
+                      </div>
+                      <button onClick={() => { deleteModel(selModel.id) }}
+                        className="p-1 text-zinc-600 hover:text-red-400" title="Entfernen">
+                        <Trash2 className="w-3.5 h-3.5" />
+                      </button>
+                      <button onClick={() => setSelectedModelId(null)} className="p-1 text-zinc-500 hover:text-zinc-300">
+                        <X className="w-4 h-4" />
+                      </button>
+                    </div>
+
+                    {/* HP */}
+                    {selModel.max_hp != null && (
+                      <div className="space-y-1.5">
+                        <div className="flex items-center gap-2">
+                          <Heart className="w-3.5 h-3.5 text-red-700" />
+                          <span className="text-xs text-zinc-400">Trefferpunkte</span>
+                          <span className="ml-auto text-sm font-bold text-zinc-100 tabular-nums">
+                            {selModel.current_hp ?? selModel.max_hp} / {selModel.max_hp}
+                          </span>
+                        </div>
+                        <div className="h-2 rounded-full bg-zinc-800">
+                          <div className="h-full rounded-full transition-all"
+                            style={{ width: `${Math.max(0, Math.min(100, hpPct! * 100))}%`, backgroundColor: hpColor }} />
+                        </div>
+                        <div className="flex gap-1">
+                          {[-10,-5,-1,1,5,10].map(d => (
+                            <button key={d} onClick={() => applyModelHp(selModel.id, d)}
+                              className={`flex-1 py-1 rounded text-xs font-bold border transition-colors ${
+                                d < 0 ? 'bg-red-950/50 border-red-800/60 text-red-300 hover:bg-red-900/70'
+                                      : 'bg-emerald-950/50 border-emerald-800/60 text-emerald-300 hover:bg-emerald-900/60'
+                              }`}>{d > 0 ? `+${d}` : d}</button>
+                          ))}
+                        </div>
+                      </div>
+                    )}
+
+                    {/* Kampfwerte */}
+                    <div className="grid grid-cols-3 gap-1.5">
+                      {selModel.armor_class != null && (
+                        <div className="text-center bg-zinc-800/60 border border-zinc-700/50 rounded-lg py-2">
+                          <Shield className="w-3 h-3 text-zinc-500 mx-auto mb-0.5" />
+                          <p className="text-sm font-bold text-zinc-100">{selModel.armor_class}</p>
+                          <p className="text-[10px] text-zinc-600">Rüstung</p>
+                        </div>
+                      )}
+                      {selModel.speed != null && (
+                        <div className="text-center bg-zinc-800/60 border border-zinc-700/50 rounded-lg py-2">
+                          <Zap className="w-3 h-3 text-zinc-500 mx-auto mb-0.5" />
+                          <p className="text-sm font-bold text-zinc-100">{selModel.speed}</p>
+                          <p className="text-[10px] text-zinc-600">ft/Runde</p>
+                        </div>
+                      )}
+                      <div className="text-center bg-zinc-800/60 border border-zinc-700/50 rounded-lg py-2">
+                        <p className="text-sm font-bold text-zinc-100">{selModel.span}</p>
+                        <p className="text-[10px] text-zinc-600">Größe</p>
+                      </div>
+                    </div>
+
+                    {/* Attribute */}
+                    {selModel.model_stats && Object.keys(selModel.model_stats).length > 0 && (
+                      <div className="grid grid-cols-6 gap-1">
+                        {(['str','dex','con','int','wis','cha'] as const).map(ab => (
+                          <div key={ab} className="text-center">
+                            <p className="text-[9px] text-zinc-600 uppercase">{ab}</p>
+                            <p className="text-[11px] font-bold text-zinc-200">{modSign(statMod(selModel.model_stats![ab] ?? 10))}</p>
+                            <p className="text-[9px] text-zinc-600">{selModel.model_stats![ab] ?? 10}</p>
+                          </div>
+                        ))}
+                      </div>
+                    )}
+
+                    {/* Conditions */}
+                    <div>
+                      {activeConds.length > 0 && (
+                        <div className="flex flex-wrap gap-1 mb-1.5">
+                          {activeConds.map(c => (
+                            <button key={c.id}
+                              onClick={() => updateModel(selModel.id, { conditions: (selModel.conditions ?? []).filter(x => x !== c.id) })}
+                              className={`flex items-center gap-1 px-1.5 py-0.5 rounded-full text-[10px] border ${c.bg} ${c.border} ${c.color} hover:opacity-70`}
+                              title="Klicken zum Entfernen">
+                              {c.icon} {c.id}
+                            </button>
+                          ))}
+                        </div>
+                      )}
+                      {availConds.length > 0 && (
+                        <details className="text-[10px] text-zinc-600">
+                          <summary className="cursor-pointer hover:text-zinc-400 flex items-center gap-1">
+                            <span>+ Zustand hinzufügen</span>
+                          </summary>
+                          <div className="mt-1.5 grid grid-cols-2 gap-1 max-h-36 overflow-y-auto">
+                            {availConds.map(c => (
+                              <button key={c.id}
+                                onClick={() => updateModel(selModel.id, { conditions: [...(selModel.conditions ?? []), c.id] })}
+                                className={`flex items-center gap-1.5 px-2 py-1 rounded-lg text-[10px] border ${c.bg} ${c.border} ${c.color} hover:opacity-80`}>
+                                {c.icon} {c.id}
+                              </button>
+                            ))}
+                          </div>
+                        </details>
+                      )}
+                    </div>
+
+                    {/* Aktionen (favorite_dice) */}
+                    {(selModel.favorite_dice ?? []).length > 0 && (
+                      <div className="space-y-1.5 pt-1 border-t border-zinc-800">
+                        <p className="text-[10px] uppercase font-semibold text-zinc-600">⚔️ Aktionen</p>
+                        {(selModel.favorite_dice ?? []).map((fav: any, idx: number) => (
+                          <div key={idx} className="flex items-center gap-1.5 px-2 py-1.5 rounded-lg bg-sky-950/20 border border-sky-900/40">
+                            <div className="flex-1 min-w-0">
+                              <p className="text-xs font-semibold text-zinc-200 truncate">{fav.name}</p>
+                              <p className="text-[10px] text-zinc-600">
+                                Atk {fav.attack_bonus >= 0 ? `+${fav.attack_bonus}` : fav.attack_bonus}
+                                {(fav.dice_config?.length ?? 0) > 0 && ` · ${fav.dice_config.map((d: any) => `${d.count}${d.type}`).join('+')}${fav.damage_bonus ? `+${fav.damage_bonus}` : ''}`}
+                              </p>
+                            </div>
+                            <button onClick={() => performRoll([{type:'d20',count:1}], fav.attack_bonus, `${fav.name} Angriff`)}
+                              className="px-1.5 py-1 rounded bg-amber-900/30 border border-amber-700/50 text-[10px] text-amber-200 hover:bg-amber-900/50">Atk</button>
+                            {(fav.dice_config?.length ?? 0) > 0 && (
+                              <button onClick={() => performRoll(fav.dice_config, fav.damage_bonus, `${fav.name} Schaden`)}
+                                className="px-1.5 py-1 rounded bg-red-950/40 border border-red-800/50 text-[10px] text-red-300 hover:bg-red-900/50">Dmg</button>
+                            )}
+                          </div>
+                        ))}
+                      </div>
+                    )}
+
+                    {/* Fähigkeiten */}
+                    {(selModel.abilities ?? []).length > 0 && (
+                      <div className="space-y-1 pt-1 border-t border-zinc-800">
+                        <p className="text-[10px] uppercase font-semibold text-zinc-600">✨ Fähigkeiten</p>
+                        <div className="flex flex-wrap gap-1">
+                          {(selModel.abilities ?? []).map((a: any) => {
+                            const exhausted = a.charges_max > 0 && a.charges_used >= a.charges_max
+                            return (
+                              <button key={a.id}
+                                onClick={() => !exhausted && useModelAbility(selModel.id, a.id)}
+                                disabled={exhausted}
+                                className={`flex items-center gap-0.5 px-1.5 py-0.5 rounded text-[9px] font-semibold border ${exhausted ? 'border-zinc-700 text-zinc-600 cursor-not-allowed' : 'border-amber-700/60 text-amber-300 hover:bg-amber-950/40'}`}>
+                                {a.name}
+                                {a.charges_max > 0 && (
+                                  <span className="flex gap-0.5 ml-0.5">
+                                    {Array.from({ length: a.charges_max }).map((_: any, i: number) => (
+                                      <span key={i} className={i < a.charges_used ? 'text-zinc-600' : 'text-amber-400'}>{i < a.charges_used ? '○' : '●'}</span>
+                                    ))}
+                                  </span>
+                                )}
+                              </button>
+                            )
+                          })}
+                        </div>
+                      </div>
+                    )}
+
+                    {/* Notizen */}
+                    <div className="pt-1 border-t border-zinc-800">
+                      <p className="text-[10px] uppercase font-semibold text-zinc-600 mb-1">Notizen</p>
+                      <textarea
+                        rows={2}
+                        className="w-full bg-zinc-800 border border-zinc-700 rounded-lg px-2 py-1.5 text-xs text-zinc-100 placeholder-zinc-600 focus:outline-none focus:border-red-700 resize-none"
+                        placeholder="Notizen…"
+                        value={selModel.notes ?? ''}
+                        onChange={e => updateModel(selModel.id, { notes: e.target.value })}
+                      />
+                    </div>
+
+                    {/* Verstecken + Rotation */}
+                    <div className="flex gap-2 pt-1 border-t border-zinc-800">
+                      <button onClick={() => updateModel(selModel.id, { is_hidden: !selModel.is_hidden })}
+                        className="flex-1 flex items-center justify-center gap-1.5 py-1.5 rounded-lg bg-zinc-800 border border-zinc-700 text-xs text-zinc-400 hover:text-zinc-200">
+                        {selModel.is_hidden ? <Eye className="w-3 h-3" /> : <EyeOff className="w-3 h-3" />}
+                        {selModel.is_hidden ? 'Sichtbar' : 'Versteckt'}
+                      </button>
+                    </div>
+                    <div>
+                      <label className="text-[10px] uppercase font-semibold text-zinc-600 block mb-1">Rotation: {selModel.rotation}°</label>
+                      <input type="range" min={0} max={360} step={1} value={selModel.rotation}
+                        onChange={e => updateModel(selModel.id, { rotation: Number(e.target.value) })}
+                        className="w-full accent-red-600" />
+                    </div>
+                  </div>
+                </div>
+              )
+            })()}
           </div>
         )}
       </div>

@@ -771,6 +771,7 @@ export default function ExtrasPage() {
   const [formAbilities, setFormAbilities]   = useState<Ability[]>([])
   const [saving, setSaving]                 = useState(false)
   const [deleteConfirmId, setDeleteConfirmId] = useState<string | null>(null)
+  const [deploySuccess, setDeploySuccess]   = useState<string | null>(null)
 
   const load = useCallback(async () => {
     if (!user) return
@@ -918,11 +919,20 @@ export default function ExtrasPage() {
     const { data: maps } = await supabase.from('battle_maps').select('id').eq('is_active', true).limit(1)
     if (!maps?.length) { alert('Kein aktives Spielfeld vorhanden. Bitte erst eine Kampfkarte erstellen.'); return }
     const mapId = maps[0].id
+    // Determine icon: use image_url if it's a URL or local path, otherwise fall back to type emoji
+    const icon = c.image_url && (c.image_url.startsWith('http') || c.image_url.startsWith('/'))
+      ? c.image_url
+      : TYPE_CONFIG[c.type]?.icon ?? '🐾'
+    // Build notes with abilities text appended
+    const abilitiesText = (c.abilities ?? []).length > 0
+      ? '\n\nFähigkeiten: ' + c.abilities.map((a: Ability) => a.name + (a.charges_max > 0 ? ` (${a.charges_max}x)` : '')).join(', ')
+      : ''
+    const notes = (c.notes ?? '') + abilitiesText
     const { error } = await supabase.from('battle_tokens').insert({
       map_id:           mapId,
       companion_id:     c.id,
       name:             c.name,
-      icon:             c.image_url || '🐾',
+      icon,
       token_type:       'npc',
       col:              0,
       row:              0,
@@ -933,7 +943,7 @@ export default function ExtrasPage() {
       initiative:       null,
       challenge_rating: null,
       conditions:       [],
-      notes:            c.notes,
+      notes:            notes || null,
       stats:            { str: c.str, dex: c.dex, con: c.con, int: c.int, wis: c.wis, cha: c.cha },
       is_hidden:        false,
       favorite_actions: (c.favorite_dice ?? []).map(a => ({
@@ -948,7 +958,8 @@ export default function ExtrasPage() {
       is_staged:        true,
     })
     if (error) { alert(`Fehler beim Bereitstellen: ${error.message}`); return }
-    alert(`${c.name} wurde in der Bereitstellung platziert! Wechsle zum Spielfeld-Tab.`)
+    setDeploySuccess(`${c.name} wurde bereitgestellt!`)
+    setTimeout(() => setDeploySuccess(null), 3000)
   }
 
   const rollCompanionAction = (c: CompanionCharacter, action: CompanionAction, rollType: 'attack' | 'damage') => {
@@ -1001,7 +1012,13 @@ export default function ExtrasPage() {
   if (!user) return null
 
   return (
-    <div className="p-4 md:p-6 max-w-5xl mx-auto space-y-5">
+    <div className="p-4 md:p-6 max-w-5xl mx-auto space-y-5 relative">
+      {/* Deploy Toast */}
+      {deploySuccess && (
+        <div className="fixed top-4 right-4 z-50 bg-emerald-900 border border-emerald-600/60 text-emerald-200 text-sm font-semibold px-4 py-2.5 rounded-xl shadow-2xl shadow-black/40 animate-fade-in">
+          ✅ {deploySuccess}
+        </div>
+      )}
       {/* Header */}
       <div className="flex items-center justify-between flex-wrap gap-3">
         <div className="flex items-center gap-3">
