@@ -37,6 +37,7 @@
     "@types/node": "^20",
     "@types/react": "^19",
     "@types/react-dom": "^19",
+    "adm-zip": "^0.5.17",
     "eslint": "^10.3.0",
     "eslint-config-next": "^16.2.6",
     "postcss": "^8",
