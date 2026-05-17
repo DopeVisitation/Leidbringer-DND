@@ -33,7 +33,7 @@ CREATE POLICY "world_maps_select" ON public.world_maps
     is_visible = TRUE
     OR EXISTS (
       SELECT 1 FROM public.profiles p
-      WHERE p.id = auth.uid() AND p.is_gm = TRUE
+      WHERE p.id = auth.uid() AND p.role = 'gm'
     )
   );
 
@@ -42,7 +42,7 @@ CREATE POLICY "world_maps_gm_write" ON public.world_maps
   FOR ALL USING (
     EXISTS (
       SELECT 1 FROM public.profiles p
-      WHERE p.id = auth.uid() AND p.is_gm = TRUE
+      WHERE p.id = auth.uid() AND p.role = 'gm'
     )
   );
 
