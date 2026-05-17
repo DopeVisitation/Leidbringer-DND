@@ -299,7 +299,7 @@ function CompanionCard({
                   className="px-1.5 py-0.5 rounded bg-amber-900/30 border border-amber-700/50 text-[10px] text-amber-200 hover:bg-amber-900/50">
                   Atk {a.attack_bonus >= 0 ? '+' : ''}{a.attack_bonus}
                 </button>
-                {a.dice_config.length > 0 && (
+                {(a.dice_config ?? []).length > 0 && (
                   <button onClick={() => onRollAction(c, a, 'damage')}
                     className="px-1.5 py-0.5 rounded bg-red-950/40 border border-red-800/50 text-[10px] text-red-300 hover:bg-red-900/50">
                     Dmg
@@ -958,7 +958,7 @@ export default function ExtrasPage() {
     } else {
       let total = action.damage_bonus
       const parts: string[] = []
-      for (const dc of action.dice_config) {
+      for (const dc of (action.dice_config ?? [])) {
         const sides = parseInt(dc.type.slice(1))
         let sum = 0
         for (let i = 0; i < dc.count; i++) sum += Math.floor(Math.random() * sides) + 1

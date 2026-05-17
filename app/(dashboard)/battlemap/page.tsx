@@ -108,6 +108,9 @@ interface PlacedAsset {
   z_index: number
 }
 
+const DICE_TYPES_LIST = ['d4','d6','d8','d10','d12','d20'] as const
+const DMG_TYPES_LIST  = ['','Hieb','Stich','Wucht','Feuer','Kälte','Blitz','Säure','Gift','Nekrose','Strahlend','Kraft','Psychisch','Donner'] as const
+
 interface TokenImage {
   name: string
   url: string
@@ -524,7 +527,30 @@ function TokenPanel({ token, onUpdate, onDelete, onClose, onEdit, isGM, myFavori
 }) {
   const [hpInput, setHpInput] = useState('')
   const [showCondPicker, setShowCondPicker] = useState(false)
+  const [showActionForm, setShowActionForm] = useState(false)
+  const [newActionName, setNewActionName] = useState('')
+  const [newActionAtk, setNewActionAtk] = useState(0)
+  const [newActionDmgBonus, setNewActionDmgBonus] = useState(0)
+  const [newActionDice, setNewActionDice] = useState<DiceConfig[]>([])
   const canEdit = isGM || ownToken
+
+  const saveNewAction = () => {
+    if (!newActionName.trim()) return
+    const action: FavoriteAction = {
+      name: newActionName.trim(),
+      attack_bonus: newActionAtk,
+      damage_bonus: newActionDmgBonus,
+      dice_config: newActionDice,
+    }
+    onUpdate({ favorite_actions: [...(token.favorite_actions ?? []), action] })
+    setNewActionName(''); setNewActionAtk(0); setNewActionDmgBonus(0); setNewActionDice([]); setShowActionForm(false)
+  }
+  const removeAction = (idx: number) =>
+    onUpdate({ favorite_actions: (token.favorite_actions ?? []).filter((_, i) => i !== idx) })
+  const addActionDie = () => setNewActionDice(d => [...d, { type: 'd6', count: 1 }])
+  const removeActionDie = (idx: number) => setNewActionDice(d => d.filter((_, i) => i !== idx))
+  const updateActionDie = (idx: number, patch: Partial<DiceConfig>) =>
+    setNewActionDice(d => d.map((dc, i) => i === idx ? { ...dc, ...patch } : dc))
   const remainingMove = movementInfo ? movementInfo.speed - movementInfo.used : null
   const activeConds = CONDITIONS.filter(c => token.conditions.includes(c.id))
   const availConds = CONDITIONS.filter(c => !token.conditions.includes(c.id))
@@ -708,7 +734,97 @@ function TokenPanel({ token, onUpdate, onDelete, onClose, onEdit, isGM, myFavori
         )}
       </div>
 
-      {/* Favorites */}
+      {/* ── Aktionen (token own actions + inline editor) ── */}
+      {canEdit && (
+        <div className="space-y-1.5 pt-1 border-t border-zinc-800">
+          <div className="flex items-center justify-between">
+            <p className="text-[10px] uppercase font-semibold text-zinc-600">⚔️ Aktionen</p>
+            <button onClick={() => setShowActionForm(f => !f)}
+              className="text-[10px] px-1.5 py-0.5 rounded bg-zinc-800 border border-zinc-700 text-zinc-500 hover:text-zinc-300">
+              {showActionForm ? 'Abbrechen' : '+ Neu'}
+            </button>
+          </div>
+
+          {/* Existing actions */}
+          {(token.favorite_actions ?? []).map((fav, idx) => (
+            <div key={idx} className="flex items-center gap-1.5 px-2 py-1.5 rounded-lg bg-sky-950/20 border border-sky-900/40">
+              <div className="flex-1 min-w-0">
+                <p className="text-xs font-semibold text-zinc-200 truncate">{fav.name}</p>
+                <p className="text-[10px] text-zinc-600">
+                  Atk {modSign(fav.attack_bonus)}
+                  {(fav.dice_config?.length ?? 0) > 0 && ` · ${fav.dice_config.map(d=>`${d.count}${d.type}`).join('+')}${fav.damage_bonus ? `+${fav.damage_bonus}` : ''}`}
+                </p>
+              </div>
+              <button onClick={() => onRoll([{type:'d20',count:1}], fav.attack_bonus, `${fav.name} Angriff`)}
+                className="px-1.5 py-1 rounded bg-amber-900/30 border border-amber-700/50 text-[10px] text-amber-200 hover:bg-amber-900/50">Atk</button>
+              {(fav.dice_config?.length ?? 0) > 0 && (
+                <button onClick={() => onRoll(fav.dice_config, fav.damage_bonus, `${fav.name} Schaden`)}
+                  className="px-1.5 py-1 rounded bg-red-950/40 border border-red-800/50 text-[10px] text-red-300 hover:bg-red-900/50">Dmg</button>
+              )}
+              {canEdit && (
+                <button onClick={() => removeAction(idx)} className="p-0.5 text-zinc-700 hover:text-red-400 flex-shrink-0">
+                  <X className="w-3 h-3" />
+                </button>
+              )}
+            </div>
+          ))}
+
+          {/* Inline new-action form */}
+          {showActionForm && (
+            <div className="bg-zinc-900 border border-zinc-700/60 rounded-lg p-2.5 space-y-2">
+              <input
+                placeholder="Name der Aktion *"
+                value={newActionName}
+                onChange={e => setNewActionName(e.target.value)}
+                className="w-full bg-zinc-800 border border-zinc-700 rounded px-2 py-1 text-xs text-zinc-100 placeholder-zinc-600 focus:outline-none focus:border-amber-500"
+              />
+              <div className="flex gap-2">
+                <div className="flex items-center gap-1 flex-1">
+                  <span className="text-[10px] text-zinc-500 whitespace-nowrap">Atk +</span>
+                  <input type="number" value={newActionAtk} onChange={e => setNewActionAtk(parseInt(e.target.value)||0)}
+                    className="w-14 bg-zinc-800 border border-zinc-700 rounded px-1.5 py-1 text-xs text-zinc-100 text-center focus:outline-none focus:border-amber-500" />
+                </div>
+                <div className="flex items-center gap-1 flex-1">
+                  <span className="text-[10px] text-zinc-500 whitespace-nowrap">Dmg +</span>
+                  <input type="number" value={newActionDmgBonus} onChange={e => setNewActionDmgBonus(parseInt(e.target.value)||0)}
+                    className="w-14 bg-zinc-800 border border-zinc-700 rounded px-1.5 py-1 text-xs text-zinc-100 text-center focus:outline-none focus:border-amber-500" />
+                </div>
+              </div>
+              {/* Dice rows */}
+              <div className="space-y-1">
+                {newActionDice.map((dc, i) => (
+                  <div key={i} className="flex items-center gap-1">
+                    <input type="number" min={1} max={20} value={dc.count}
+                      onChange={e => updateActionDie(i, { count: parseInt(e.target.value)||1 })}
+                      className="w-10 bg-zinc-800 border border-zinc-700 rounded px-1 py-1 text-xs text-zinc-100 text-center focus:outline-none focus:border-amber-500" />
+                    <select value={dc.type} onChange={e => updateActionDie(i, { type: e.target.value })}
+                      className="w-16 bg-zinc-800 border border-zinc-700 rounded px-1 py-1 text-xs text-zinc-300 focus:outline-none focus:border-amber-500">
+                      {DICE_TYPES_LIST.map(d => <option key={d} value={d}>{d}</option>)}
+                    </select>
+                    <select value={dc.damageType ?? ''} onChange={e => updateActionDie(i, { damageType: e.target.value || undefined })}
+                      className="flex-1 bg-zinc-800 border border-zinc-700 rounded px-1 py-1 text-xs text-zinc-300 focus:outline-none focus:border-amber-500">
+                      {DMG_TYPES_LIST.map(d => <option key={d} value={d}>{d || '—'}</option>)}
+                    </select>
+                    <button type="button" onClick={() => removeActionDie(i)} className="p-0.5 text-zinc-600 hover:text-red-400">
+                      <X className="w-3 h-3" />
+                    </button>
+                  </div>
+                ))}
+                <button type="button" onClick={addActionDie}
+                  className="text-[10px] px-2 py-0.5 rounded bg-zinc-800 border border-zinc-700 text-zinc-500 hover:text-zinc-300">
+                  + Würfel
+                </button>
+              </div>
+              <button onClick={saveNewAction} disabled={!newActionName.trim()}
+                className="w-full py-1.5 rounded bg-amber-600 hover:bg-amber-500 disabled:opacity-40 text-xs font-bold text-white">
+                Aktion speichern
+              </button>
+            </div>
+          )}
+        </div>
+      )}
+
+      {/* Player dice favorites (from dice_favorites table) */}
       {(ownToken || (isGM && token.token_type === 'player')) && myFavorites.length > 0 && (
         <div className="space-y-1.5 pt-1 border-t border-zinc-800">
           <p className="text-[10px] uppercase font-semibold text-zinc-600 flex items-center gap-1">
