@@ -43,6 +43,13 @@ interface FavoriteAction {
 }
 interface DiceConfig { type: string; count: number; damageType?: string }
 
+interface Ability {
+  id: string; name: string; description: string
+  charges_max: number; charges_used: number
+  dice_config: DiceConfig[]; damage_bonus: number
+  save_type: string; save_dc: number
+}
+
 interface BattleToken {
   id: string; map_id: string; token_type: 'player' | 'monster' | 'npc'
   name: string; icon: string; col: number; row: number
@@ -53,6 +60,8 @@ interface BattleToken {
   player_user_id: string | null; token_size: TokenSize; movement_used: number
   is_staged: boolean
   companion_id: string | null
+  is_flying: boolean
+  abilities: Ability[]
 }
 
 interface DiceFavorite {
@@ -472,10 +481,13 @@ function TokenPiece({ token, selected, cellSize, isMoving, isDragged, isActiveTu
     : token.token_type === 'monster' ? 'bg-stone-900/90' : 'bg-zinc-800/80'
 
   return (
-    <div style={{ width: pixW, height: pixH, userSelect: 'none', position: 'relative', opacity: isDragged ? 0.3 : 1 }}
+    <div style={{ width: pixW, height: pixH, userSelect: 'none', position: 'relative', opacity: isDragged ? 0.3 : token.is_flying ? 0.55 : 1 }}
       className={`flex flex-col items-center justify-center rounded-lg border-2 transition-all shadow-md ${borderClass} ${bgClass}`}>
       {isActiveTurn && (
         <div className="absolute -top-1 -right-1 w-3 h-3 bg-amber-400 rounded-full animate-pulse" />
+      )}
+      {token.is_flying && (
+        <div className="absolute top-0 left-0 w-3.5 h-3.5 bg-sky-500/80 rounded-full flex items-center justify-center text-[7px]" title="Fliegend">☁</div>
       )}
       {(token.icon?.startsWith('http') || token.icon?.startsWith('/')) ? (
         // eslint-disable-next-line @next/next/no-img-element
@@ -533,6 +545,12 @@ function TokenPanel({ token, onUpdate, onDelete, onClose, onEdit, isGM, myFavori
   const [newActionAtk, setNewActionAtk] = useState(0)
   const [newActionDmgBonus, setNewActionDmgBonus] = useState(0)
   const [newActionDice, setNewActionDice] = useState<DiceConfig[]>([])
+  const [showAbilityForm, setShowAbilityForm] = useState(false)
+  const [newAbilityName, setNewAbilityName] = useState('')
+  const [newAbilityDesc, setNewAbilityDesc] = useState('')
+  const [newAbilityCharges, setNewAbilityCharges] = useState(0)
+  const [newAbilityDmgBonus, setNewAbilityDmgBonus] = useState(0)
+  const [newAbilityDice, setNewAbilityDice] = useState<DiceConfig[]>([])
   const canEdit = isGM || ownToken
 
   const saveNewAction = () => {
@@ -552,6 +570,31 @@ function TokenPanel({ token, onUpdate, onDelete, onClose, onEdit, isGM, myFavori
   const removeActionDie = (idx: number) => setNewActionDice(d => d.filter((_, i) => i !== idx))
   const updateActionDie = (idx: number, patch: Partial<DiceConfig>) =>
     setNewActionDice(d => d.map((dc, i) => i === idx ? { ...dc, ...patch } : dc))
+
+  const saveNewAbility = () => {
+    if (!newAbilityName.trim()) return
+    const ability: Ability = {
+      id: crypto.randomUUID(), name: newAbilityName.trim(), description: newAbilityDesc.trim(),
+      charges_max: newAbilityCharges, charges_used: 0,
+      dice_config: newAbilityDice, damage_bonus: newAbilityDmgBonus,
+      save_type: '', save_dc: 0,
+    }
+    onUpdate({ abilities: [...(token.abilities ?? []), ability] })
+    setNewAbilityName(''); setNewAbilityDesc(''); setNewAbilityCharges(0); setNewAbilityDmgBonus(0); setNewAbilityDice([]); setShowAbilityForm(false)
+  }
+  const removeAbility = (id: string) =>
+    onUpdate({ abilities: (token.abilities ?? []).filter(a => a.id !== id) })
+  const useAbility = (id: string) => {
+    const updated = (token.abilities ?? []).map(a =>
+      a.id === id && (a.charges_max === 0 || a.charges_used < a.charges_max)
+        ? { ...a, charges_used: a.charges_used + 1 } : a
+    )
+    onUpdate({ abilities: updated })
+  }
+  const addAbilityDie = () => setNewAbilityDice(d => [...d, { type: 'd6', count: 1 }])
+  const removeAbilityDie = (idx: number) => setNewAbilityDice(d => d.filter((_, i) => i !== idx))
+  const updateAbilityDie = (idx: number, patch: Partial<DiceConfig>) =>
+    setNewAbilityDice(d => d.map((dc, i) => i === idx ? { ...dc, ...patch } : dc))
   const remainingMove = movementInfo ? movementInfo.speed - movementInfo.used : null
   const activeConds = CONDITIONS.filter(c => token.conditions.includes(c.id))
   const availConds = CONDITIONS.filter(c => !token.conditions.includes(c.id))
@@ -825,6 +868,108 @@ function TokenPanel({ token, onUpdate, onDelete, onClose, onEdit, isGM, myFavori
         </div>
       )}
 
+      {/* ── Fähigkeiten / Abilities ── */}
+      {canEdit && (
+        <div className="space-y-1.5 pt-1 border-t border-zinc-800">
+          <div className="flex items-center justify-between">
+            <p className="text-[10px] uppercase font-semibold text-zinc-600">✨ Fähigkeiten</p>
+            <button onClick={() => setShowAbilityForm(f => !f)}
+              className="text-[10px] px-1.5 py-0.5 rounded bg-zinc-800 border border-zinc-700 text-zinc-500 hover:text-zinc-300">
+              {showAbilityForm ? 'Abbrechen' : '+ Neu'}
+            </button>
+          </div>
+          {/* Existing abilities */}
+          <div className="flex flex-wrap gap-1">
+            {(token.abilities ?? []).map(a => {
+              const exhausted = a.charges_max > 0 && a.charges_used >= a.charges_max
+              const hasDice = (a.dice_config ?? []).length > 0
+              return (
+                <div key={a.id} className="flex items-center gap-0.5">
+                  <button
+                    onClick={() => !exhausted && useAbility(a.id)}
+                    disabled={exhausted}
+                    title={a.description || a.name}
+                    className={`flex items-center gap-1 px-1.5 py-1 rounded text-[10px] font-semibold border transition-colors ${exhausted ? 'border-zinc-700 text-zinc-600 bg-zinc-800/40 cursor-not-allowed' : 'border-amber-700/60 text-amber-300 bg-amber-950/30 hover:bg-amber-950/60'}`}>
+                    {a.name}
+                    {a.charges_max > 0 && (
+                      <span className="flex gap-0.5 ml-0.5">
+                        {Array.from({ length: a.charges_max }).map((_, i) => (
+                          <span key={i} className={i < a.charges_used ? 'text-zinc-600' : 'text-amber-400'}>{i < a.charges_used ? '○' : '●'}</span>
+                        ))}
+                      </span>
+                    )}
+                  </button>
+                  {hasDice && !exhausted && (
+                    <button onClick={() => onRoll(a.dice_config, a.damage_bonus, `${a.name} Schaden`)}
+                      className="px-1 py-0.5 rounded bg-red-950/40 border border-red-800/50 text-[9px] text-red-300 hover:bg-red-900/50">🎲</button>
+                  )}
+                  {canEdit && (
+                    <button onClick={() => removeAbility(a.id)} className="p-0.5 text-zinc-700 hover:text-red-400">
+                      <X className="w-2.5 h-2.5" />
+                    </button>
+                  )}
+                </div>
+              )
+            })}
+          </div>
+          {/* New ability form */}
+          {showAbilityForm && (
+            <div className="bg-zinc-900 border border-zinc-700/60 rounded-lg p-2.5 space-y-2">
+              <input placeholder="Name der Fähigkeit *" value={newAbilityName}
+                onChange={e => setNewAbilityName(e.target.value)}
+                className="w-full bg-zinc-800 border border-zinc-700 rounded px-2 py-1 text-xs text-zinc-100 placeholder-zinc-600 focus:outline-none focus:border-amber-500" />
+              <input placeholder="Beschreibung (optional)" value={newAbilityDesc}
+                onChange={e => setNewAbilityDesc(e.target.value)}
+                className="w-full bg-zinc-800 border border-zinc-700 rounded px-2 py-1 text-xs text-zinc-100 placeholder-zinc-600 focus:outline-none focus:border-amber-500" />
+              <div className="flex gap-2">
+                <div className="flex items-center gap-1 flex-1">
+                  <span className="text-[10px] text-zinc-500 whitespace-nowrap">Ladungen</span>
+                  <input type="number" min={0} value={newAbilityCharges} onChange={e => setNewAbilityCharges(parseInt(e.target.value)||0)}
+                    className="w-12 bg-zinc-800 border border-zinc-700 rounded px-1.5 py-1 text-xs text-zinc-100 text-center focus:outline-none focus:border-amber-500" />
+                </div>
+                <div className="flex items-center gap-1 flex-1">
+                  <span className="text-[10px] text-zinc-500 whitespace-nowrap">Dmg +</span>
+                  <input type="number" value={newAbilityDmgBonus} onChange={e => setNewAbilityDmgBonus(parseInt(e.target.value)||0)}
+                    className="w-12 bg-zinc-800 border border-zinc-700 rounded px-1.5 py-1 text-xs text-zinc-100 text-center focus:outline-none focus:border-amber-500" />
+                </div>
+              </div>
+              <div className="space-y-1">
+                {newAbilityDice.map((dc, i) => (
+                  <div key={i} className="flex items-center gap-1">
+                    <input type="number" min={1} max={20} value={dc.count}
+                      onChange={e => updateAbilityDie(i, { count: parseInt(e.target.value)||1 })}
+                      className="w-10 bg-zinc-800 border border-zinc-700 rounded px-1 py-1 text-xs text-zinc-100 text-center focus:outline-none focus:border-amber-500" />
+                    <select value={dc.type} onChange={e => updateAbilityDie(i, { type: e.target.value })}
+                      className="w-16 bg-zinc-800 border border-zinc-700 rounded px-1 py-1 text-xs text-zinc-300 focus:outline-none focus:border-amber-500">
+                      {DICE_TYPES_LIST.map(d => <option key={d} value={d}>{d}</option>)}
+                    </select>
+                    <button type="button" onClick={() => removeAbilityDie(i)} className="p-0.5 text-zinc-600 hover:text-red-400">
+                      <X className="w-3 h-3" />
+                    </button>
+                  </div>
+                ))}
+                <button type="button" onClick={addAbilityDie}
+                  className="text-[10px] px-2 py-0.5 rounded bg-zinc-800 border border-zinc-700 text-zinc-500 hover:text-zinc-300">+ Würfel</button>
+              </div>
+              <button onClick={saveNewAbility} disabled={!newAbilityName.trim()}
+                className="w-full py-1.5 rounded bg-amber-700 hover:bg-amber-600 disabled:opacity-40 text-xs font-bold text-white">
+                Fähigkeit speichern
+              </button>
+            </div>
+          )}
+        </div>
+      )}
+
+      {/* ── Flug-Modus ── */}
+      {canEdit && (
+        <div className="pt-1 border-t border-zinc-800">
+          <button onClick={() => onUpdate({ is_flying: !token.is_flying })}
+            className={`w-full flex items-center justify-center gap-1.5 py-1.5 rounded-lg border text-xs font-semibold transition-colors ${token.is_flying ? 'bg-sky-900/30 border-sky-700/60 text-sky-300' : 'bg-zinc-800 border-zinc-700 text-zinc-500 hover:text-zinc-300'}`}>
+            ☁ {token.is_flying ? 'Fliegend (Klick zum Deaktivieren)' : 'Fliegen aktivieren'}
+          </button>
+        </div>
+      )}
+
       {/* Player dice favorites (from dice_favorites table) */}
       {(ownToken || (isGM && token.token_type === 'player')) && myFavorites.length > 0 && (
         <div className="space-y-1.5 pt-1 border-t border-zinc-800">
@@ -983,7 +1128,9 @@ export default function BattleMapPage() {
   const [modelSearch, setModelSearch] = useState('')
   const [selectedModelImage, setSelectedModelImage] = useState<TokenImage | null>(null)
   const [modelForm, setModelForm] = useState({ name: '', span: 1, rotation: 0, max_hp: '', armor_class: '', speed: '', str: '10', dex: '10', con: '10', int: '10', wis: '10', cha: '10', notes: '' })
-  const [deployingModelData, setDeployingModelData] = useState<{ image_url: string; name: string; span: number; rotation: number; max_hp: number|null; armor_class: number|null; speed: number|null; model_stats: Record<string,number>|null; notes: string|null } | null>(null)
+  const [modelFormDice, setModelFormDice] = useState<FavoriteAction[]>([])
+  const [modelFormAbilities, setModelFormAbilities] = useState<Ability[]>([])
+  const [deployingModelData, setDeployingModelData] = useState<{ image_url: string; name: string; span: number; rotation: number; max_hp: number|null; armor_class: number|null; speed: number|null; model_stats: Record<string,number>|null; notes: string|null; favorite_dice: FavoriteAction[]; abilities: Ability[] } | null>(null)
   const [selectedModelId, setSelectedModelId] = useState<string | null>(null)
   // Asset picker
   const [showAssetPicker, setShowAssetPicker] = useState(false)
@@ -1002,6 +1149,11 @@ export default function BattleMapPage() {
   const [mapFavorites, setMapFavorites] = useState<string[]>(() => {
     try { return JSON.parse(localStorage.getItem('mapFavorites') ?? '[]') } catch { return [] }
   })
+
+  // ── Ruler / Measurement ──
+  const [rulerMode, setRulerMode] = useState(false)
+  const [rulerStart, setRulerStart] = useState<{ col: number; row: number } | null>(null)
+  const [rulerEnd, setRulerEnd] = useState<{ col: number; row: number } | null>(null)
 
   // Drag & Drop – all drag state in ref to avoid stale closures
   const dragStateRef = useRef<{
@@ -1365,6 +1517,7 @@ export default function BattleMapPage() {
       ...t, conditions: t.conditions ?? [], favorite_actions: t.favorite_actions ?? [],
       token_size: t.token_size ?? 'medium', movement_used: t.movement_used ?? 0,
       is_staged: t.is_staged ?? false, companion_id: t.companion_id ?? null,
+      is_flying: t.is_flying ?? false, abilities: t.abilities ?? [],
     })))
   }, [supabase])
 
@@ -1470,6 +1623,8 @@ export default function BattleMapPage() {
       speed: deployingModelData.speed,
       model_stats: deployingModelData.model_stats,
       notes: deployingModelData.notes,
+      favorite_dice: deployingModelData.favorite_dice ?? [],
+      abilities: deployingModelData.abilities ?? [],
     }).select().single()
     if (data) setPlacedModels(prev => [...prev, { ...data, conditions: [] } as PlacedModel])
     setDeployingModelData(null)
@@ -1764,8 +1919,9 @@ export default function BattleMapPage() {
     // Check overlap — is the cell occupied?
     const tokenToPlace = tokens.find(t => t.id === id)
     const span = Math.max(1, Math.ceil(getSizeSpan(tokenToPlace?.token_size || 'medium')))
-    const occupied = mapTokens.some(t => {
+    const occupied = !tokenToPlace?.is_flying && mapTokens.some(t => {
       if (t.id === id) return false
+      if (t.is_flying) return false
       const os = Math.max(1, Math.ceil(getSizeSpan(t.token_size || 'medium')))
       return !(col + span <= t.col || col >= t.col + os || row + span <= t.row || row >= t.row + os)
     })
@@ -1829,22 +1985,61 @@ export default function BattleMapPage() {
   }
 
   const addMyPlayerToken = async () => {
-    let initial: Partial<typeof BLANK_TOKEN_FORM> = { token_type: 'player', icon: '🧙' }
-    if (user) {
-      const { data } = await supabase.from('character_links').select('full_data, character_name').eq('user_id', user.id).maybeSingle()
-      if (data?.full_data) {
-        const fd = data.full_data as CharacterFullData
-        initial = {
-          token_type: 'player', name: fd.character_name || data.character_name || '',
-          max_hp: String(fd.max_hp || 10), armor_class: String(fd.armor_class || 10),
-          speed: String(fd.speed || 30), initiative: String(fd.initiative || 0),
-          str: String(fd.stats?.str || 10), dex: String(fd.stats?.dex || 10),
-          con: String(fd.stats?.con || 10), int: String(fd.stats?.int || 10),
-          wis: String(fd.stats?.wis || 10), cha: String(fd.stats?.cha || 10), icon: '🧙',
-        }
-      }
+    if (!activeMap || !user) return
+    // Fetch full character data
+    const { data } = await supabase.from('character_links').select('full_data, character_name').eq('user_id', user.id).maybeSingle()
+    if (!data?.full_data) {
+      // No character linked — fall back to form
+      setMyTokenInitial({ token_type: 'player', icon: '🧙' }); setShowAddModal(true); return
     }
-    setMyTokenInitial(initial); setShowAddModal(true)
+    const fd = data.full_data as CharacterFullData
+    // Map equipped weapons to favorite_actions
+    const weaponActions: FavoriteAction[] = (fd.weapons ?? [])
+      .filter((w: any) => w.equipped)
+      .map((w: any) => {
+        // Parse damage string like "1d8" or "2d6" to DiceConfig
+        const match = (w.damage ?? '').match(/(\d+)d(\d+)/)
+        const dice_config: DiceConfig[] = match ? [{ type: `d${match[2]}`, count: parseInt(match[1]) }] : []
+        return {
+          name: w.name,
+          attack_bonus: w.attackBonus ?? 0,
+          damage_bonus: w.damageBonus ?? 0,
+          dice_config,
+        }
+      })
+    // Map spells as abilities
+    const spellAbilities: Ability[] = (fd.spells ?? [])
+      .filter((s: any) => s.level > 0)
+      .slice(0, 10)
+      .map((s: any) => ({
+        id: crypto.randomUUID(),
+        name: s.name,
+        description: `Zaubergrad ${s.level} · ${s.school || ''}`.trim(),
+        charges_max: 0, charges_used: 0,
+        dice_config: [], damage_bonus: 0, save_type: '', save_dc: 0,
+      }))
+    // Insert token directly to map (is_staged = false → lands on grid at 0,0)
+    await supabase.from('battle_tokens').insert({
+      map_id: activeMap.id, token_type: 'player',
+      name: fd.character_name || data.character_name || 'Spieler',
+      icon: fd.avatar_url || '🧙',
+      col: 0, row: 0,
+      max_hp: fd.max_hp || null,
+      current_hp: fd.max_hp || null,
+      armor_class: fd.armor_class || null,
+      speed: fd.speed || null,
+      initiative: fd.initiative || 0,
+      challenge_rating: null,
+      conditions: [], notes: null,
+      stats: { str: fd.stats?.str||10, dex: fd.stats?.dex||10, con: fd.stats?.con||10,
+               int: fd.stats?.int||10, wis: fd.stats?.wis||10, cha: fd.stats?.cha||10 },
+      is_hidden: false,
+      favorite_actions: weaponActions,
+      abilities: spellAbilities,
+      player_user_id: user.id,
+      token_size: 'medium', movement_used: 0, is_staged: false,
+    })
+    loadTokens(activeMap.id)
   }
 
   const myToken = tokens.find(t => t.player_user_id === user?.id)
@@ -2027,6 +2222,12 @@ export default function BattleMapPage() {
       placeAssetAt(Math.max(0, Math.min(100, xPct)), Math.max(0, Math.min(100, yPct)))
       return
     }
+    // ── Ruler mode ──
+    if (rulerMode) {
+      if (!rulerStart) { setRulerStart(cell); setRulerEnd(null) }
+      else { setRulerEnd(cell); setRulerStart(null) }
+      return
+    }
     if (terrainMode && isGM) { toggleTerrain(cell.col, cell.row); return }
     if (effectMode) {
       const et = EFFECT_TYPES.find(x => x.id === effectMode)
@@ -2049,6 +2250,7 @@ export default function BattleMapPage() {
     const cell = getCellFromEvent(e)
     setHoverCoord(cell)
     if (moveMode) setHoverCell(cell); else setHoverCell(null)
+    if (rulerMode && rulerStart && cell) setRulerEnd(cell)
   }
 
   // ── Roll ──
@@ -2177,11 +2379,16 @@ export default function BattleMapPage() {
                     {activeMap.grid_locked ? <Lock className="w-3 h-3" /> : <Unlock className="w-3 h-3" />}
                     {activeMap.grid_locked ? 'Gesperrt' : 'Entsperrt'}
                   </button>
-                  <button onClick={() => { setTerrainMode(!terrainMode); setEffectMode(null); setFogMode(false) }}
+                  <button onClick={() => { setRulerMode(r => !r); setTerrainMode(false); setFogMode(false); setEffectMode(null); setRulerStart(null); setRulerEnd(null) }}
+                    className={`flex items-center gap-1 px-2 py-1.5 rounded border text-xs transition-colors ${rulerMode ? 'bg-yellow-900/40 border-yellow-700/60 text-yellow-300' : 'bg-zinc-800/80 border-zinc-700/60 text-zinc-500 hover:text-zinc-300'}`}
+                    title="Lineal – Klicke zwei Felder um Distanz zu messen">
+                    📏 Lineal
+                  </button>
+                  <button onClick={() => { setTerrainMode(!terrainMode); setEffectMode(null); setFogMode(false); setRulerMode(false) }}
                     className={`flex items-center gap-1 px-2 py-1.5 rounded border text-xs transition-colors ${terrainMode ? 'bg-orange-950/40 border-orange-700/60 text-orange-300' : 'bg-zinc-800/80 border-zinc-700/60 text-zinc-500 hover:text-zinc-300'}`}>
                     Gelände
                   </button>
-                  <button onClick={() => { setFogMode(!fogMode); setTerrainMode(false); setEffectMode(null) }}
+                  <button onClick={() => { setFogMode(!fogMode); setTerrainMode(false); setEffectMode(null); setRulerMode(false) }}
                     className={`flex items-center gap-1 px-2 py-1.5 rounded border text-xs transition-colors ${fogMode ? 'bg-slate-700/60 border-slate-500/60 text-slate-200' : 'bg-zinc-800/80 border-zinc-700/60 text-zinc-500 hover:text-zinc-300'}`}>
                     <Cloud className="w-3 h-3" /> Nebel
                   </button>
@@ -2686,7 +2893,7 @@ export default function BattleMapPage() {
             <div className="flex items-center gap-2 px-5 py-4 border-b border-zinc-800 flex-shrink-0">
               <span className="text-xl">🐉</span>
               <p className="flex-1 font-bold text-zinc-100">Modell platzieren</p>
-              <button onClick={() => { setShowModelPicker(false); setSelectedModelImage(null); setModelForm({ name: '', span: 1, rotation: 0, max_hp: '', armor_class: '', speed: '', str: '10', dex: '10', con: '10', int: '10', wis: '10', cha: '10', notes: '' }) }} className="text-zinc-500 hover:text-zinc-300"><X className="w-5 h-5" /></button>
+              <button onClick={() => { setShowModelPicker(false); setSelectedModelImage(null); setModelForm({ name: '', span: 1, rotation: 0, max_hp: '', armor_class: '', speed: '', str: '10', dex: '10', con: '10', int: '10', wis: '10', cha: '10', notes: '' }); setModelFormDice([]); setModelFormAbilities([]) }} className="text-zinc-500 hover:text-zinc-300"><X className="w-5 h-5" /></button>
             </div>
             <div className="overflow-y-auto flex-1 p-4 space-y-3">
               {!selectedModelImage ? (
@@ -2784,6 +2991,64 @@ export default function BattleMapPage() {
                       className="w-full bg-zinc-800 border border-zinc-700 rounded-lg px-3 py-2 text-sm text-zinc-100 placeholder-zinc-600 focus:outline-none focus:border-red-700 resize-none"
                       value={modelForm.notes} onChange={e => setModelForm(f => ({...f, notes: e.target.value}))} />
                   </div>
+                  {/* Aktionen */}
+                  <div>
+                    <div className="flex items-center justify-between mb-1">
+                      <label className="text-[10px] uppercase font-semibold text-zinc-500">Aktionen</label>
+                      <button type="button" onClick={() => setModelFormDice(d => [...d, { name: '', attack_bonus: 0, damage_bonus: 0, dice_config: [] }])}
+                        className="text-[10px] px-1.5 py-0.5 rounded bg-zinc-800 border border-zinc-700 text-zinc-500 hover:text-zinc-300">+ Hinzufügen</button>
+                    </div>
+                    {modelFormDice.map((a, ai) => (
+                      <div key={ai} className="bg-zinc-800/50 border border-zinc-700/50 rounded p-2 mb-1.5 space-y-1.5">
+                        <div className="flex gap-1 items-center">
+                          <input type="text" placeholder="Aktionsname" value={a.name}
+                            onChange={e => setModelFormDice(d => d.map((x, i) => i === ai ? { ...x, name: e.target.value } : x))}
+                            className="flex-1 bg-zinc-800 border border-zinc-700 rounded px-2 py-1 text-xs text-zinc-100 placeholder-zinc-600 focus:outline-none focus:border-red-700" />
+                          <button onClick={() => setModelFormDice(d => d.filter((_, i) => i !== ai))}
+                            className="p-1 text-zinc-600 hover:text-red-400 flex-shrink-0"><X className="w-3 h-3" /></button>
+                        </div>
+                        <div className="flex gap-2">
+                          <div className="flex items-center gap-1">
+                            <span className="text-[9px] text-zinc-500">Atk +</span>
+                            <input type="number" value={a.attack_bonus}
+                              onChange={e => setModelFormDice(d => d.map((x, i) => i === ai ? { ...x, attack_bonus: parseInt(e.target.value)||0 } : x))}
+                              className="w-12 bg-zinc-800 border border-zinc-700 rounded px-1 py-1 text-xs text-zinc-100 text-center focus:outline-none focus:border-red-700" />
+                          </div>
+                          <div className="flex items-center gap-1">
+                            <span className="text-[9px] text-zinc-500">Dmg +</span>
+                            <input type="number" value={a.damage_bonus}
+                              onChange={e => setModelFormDice(d => d.map((x, i) => i === ai ? { ...x, damage_bonus: parseInt(e.target.value)||0 } : x))}
+                              className="w-12 bg-zinc-800 border border-zinc-700 rounded px-1 py-1 text-xs text-zinc-100 text-center focus:outline-none focus:border-red-700" />
+                          </div>
+                        </div>
+                      </div>
+                    ))}
+                  </div>
+                  {/* Fähigkeiten */}
+                  <div>
+                    <div className="flex items-center justify-between mb-1">
+                      <label className="text-[10px] uppercase font-semibold text-zinc-500">Fähigkeiten</label>
+                      <button type="button" onClick={() => setModelFormAbilities(a => [...a, { id: crypto.randomUUID(), name: '', description: '', charges_max: 0, charges_used: 0, dice_config: [], damage_bonus: 0, save_type: '', save_dc: 0 }])}
+                        className="text-[10px] px-1.5 py-0.5 rounded bg-zinc-800 border border-zinc-700 text-zinc-500 hover:text-zinc-300">+ Hinzufügen</button>
+                    </div>
+                    {modelFormAbilities.map((a, ai) => (
+                      <div key={a.id} className="bg-zinc-800/50 border border-zinc-700/50 rounded p-2 mb-1.5 space-y-1">
+                        <div className="flex gap-1 items-center">
+                          <input type="text" placeholder="Fähigkeitsname" value={a.name}
+                            onChange={e => setModelFormAbilities(d => d.map((x, i) => i === ai ? { ...x, name: e.target.value } : x))}
+                            className="flex-1 bg-zinc-800 border border-zinc-700 rounded px-2 py-1 text-xs text-zinc-100 placeholder-zinc-600 focus:outline-none focus:border-red-700" />
+                          <button onClick={() => setModelFormAbilities(d => d.filter((_, i) => i !== ai))}
+                            className="p-1 text-zinc-600 hover:text-red-400 flex-shrink-0"><X className="w-3 h-3" /></button>
+                        </div>
+                        <div className="flex items-center gap-2">
+                          <span className="text-[9px] text-zinc-500">Ladungen (0=∞)</span>
+                          <input type="number" min={0} value={a.charges_max}
+                            onChange={e => setModelFormAbilities(d => d.map((x, i) => i === ai ? { ...x, charges_max: parseInt(e.target.value)||0 } : x))}
+                            className="w-14 bg-zinc-800 border border-zinc-700 rounded px-1 py-1 text-xs text-zinc-100 text-center focus:outline-none focus:border-red-700" />
+                        </div>
+                      </div>
+                    ))}
+                  </div>
                 </div>
               )}
             </div>
@@ -2799,8 +3064,9 @@ export default function BattleMapPage() {
                     const ac = parseInt(modelForm.armor_class) || null
                     const spd = parseInt(modelForm.speed) || null
                     const stats = { str: parseInt(modelForm.str)||10, dex: parseInt(modelForm.dex)||10, con: parseInt(modelForm.con)||10, int: parseInt(modelForm.int)||10, wis: parseInt(modelForm.wis)||10, cha: parseInt(modelForm.cha)||10 }
-                    setDeployingModelData({ image_url: selectedModelImage.url, name: modelForm.name, span: modelForm.span, rotation: modelForm.rotation, max_hp: hp, armor_class: ac, speed: spd, model_stats: stats, notes: modelForm.notes || null })
+                    setDeployingModelData({ image_url: selectedModelImage.url, name: modelForm.name, span: modelForm.span, rotation: modelForm.rotation, max_hp: hp, armor_class: ac, speed: spd, model_stats: stats, notes: modelForm.notes || null, favorite_dice: modelFormDice, abilities: modelFormAbilities })
                     setShowModelPicker(false); setSelectedModelImage(null)
+                    setModelFormDice([]); setModelFormAbilities([])
                   }}
                   className="flex-1 py-2 rounded-lg bg-red-900 hover:bg-red-800 border border-red-700/60 disabled:opacity-40 text-sm font-bold text-zinc-100">
                   📍 Platzieren
@@ -3612,7 +3878,7 @@ export default function BattleMapPage() {
                     ? `url(${activeMap.image_url})`
                     : 'linear-gradient(160deg, #0c0008 0%, #050010 40%, #0a0005 70%, #000000 100%)',
                   backgroundSize: '100% 100%', backgroundPosition: 'top left',
-                  cursor: fogMode ? 'crosshair' : terrainMode ? 'crosshair' : effectMode ? 'cell' : moveMode ? 'pointer' : dragRender ? 'grabbing' : 'default',
+                  cursor: rulerMode ? 'crosshair' : fogMode ? 'crosshair' : terrainMode ? 'crosshair' : effectMode ? 'cell' : moveMode ? 'pointer' : dragRender ? 'grabbing' : 'default',
                 }}
                 onClick={handleGridClick}
                 onMouseDown={handleMapMouseDown}
@@ -3691,6 +3957,31 @@ export default function BattleMapPage() {
                       />
                     )
                   })}
+
+                  {/* Ruler / Measurement overlay */}
+                  {rulerMode && rulerStart && rulerEnd && (() => {
+                    const fpc = activeMap.feet_per_cell ?? 5
+                    const dc = Math.abs(rulerEnd.col - rulerStart.col)
+                    const dr = Math.abs(rulerEnd.row - rulerStart.row)
+                    const cells = Math.sqrt(dc * dc + dr * dr)
+                    const feet = Math.round(cells * fpc)
+                    const x1 = (rulerStart.col + 0.5) * cs + ox, y1 = (rulerStart.row + 0.5) * cs + oy
+                    const x2 = (rulerEnd.col + 0.5) * cs + ox, y2 = (rulerEnd.row + 0.5) * cs + oy
+                    const mx = (x1 + x2) / 2, my = (y1 + y2) / 2
+                    return (
+                      <g>
+                        <line x1={x1} y1={y1} x2={x2} y2={y2} stroke="#facc15" strokeWidth="2.5" strokeDasharray="8 4" strokeLinecap="round" />
+                        <circle cx={x1} cy={y1} r="5" fill="#facc15" opacity="0.9" />
+                        <circle cx={x2} cy={y2} r="5" fill="#facc15" opacity="0.9" />
+                        <rect x={mx - 28} y={my - 11} width="56" height="22" rx="5" fill="rgba(0,0,0,0.82)" />
+                        <text x={mx} y={my + 5} textAnchor="middle" fontSize="12" fontWeight="bold" fill="#facc15">{feet} ft</text>
+                      </g>
+                    )
+                  })()}
+                  {rulerMode && rulerStart && !rulerEnd && (() => {
+                    const p = cellPx(rulerStart.col, rulerStart.row)
+                    return <circle cx={p.x + cs / 2} cy={p.y + cs / 2} r="6" fill="#facc15" opacity="0.85" />
+                  })()}
 
                   {/* Fog mode hover indicator */}
                   {fogMode && hoverCoord && (
@@ -3876,6 +4167,11 @@ export default function BattleMapPage() {
                   <div className="absolute bottom-3 left-1/2 -translate-x-1/2 bg-slate-900/90 text-slate-200 text-xs px-3 py-1.5 rounded-full pointer-events-none border border-slate-700/60">
                     <Cloud className="w-3.5 h-3.5 inline mr-1.5" />
                     {fogBrushMode === 'paint' ? 'Pinsel' : 'Radierer'} — Ziehe über Felder
+                  </div>
+                )}
+                {rulerMode && (
+                  <div className="absolute bottom-3 left-1/2 -translate-x-1/2 bg-zinc-900/90 text-yellow-300 text-xs px-3 py-1.5 rounded-full pointer-events-none border border-yellow-800/60">
+                    📏 Lineal — {rulerStart ? 'Klicke das Zielfeld' : 'Klicke den Startpunkt'}
                   </div>
                 )}
                 {terrainMode && !fogMode && (
@@ -4192,7 +4488,7 @@ export default function BattleMapPage() {
                       />
                     </div>
 
-                    {/* Verstecken + Rotation */}
+                    {/* Verstecken + Rotation + Save to Extras */}
                     <div className="flex gap-2 pt-1 border-t border-zinc-800">
                       <button onClick={() => updateModel(selModel.id, { is_hidden: !selModel.is_hidden })}
                         className="flex-1 flex items-center justify-center gap-1.5 py-1.5 rounded-lg bg-zinc-800 border border-zinc-700 text-xs text-zinc-400 hover:text-zinc-200">
@@ -4200,6 +4496,35 @@ export default function BattleMapPage() {
                         {selModel.is_hidden ? 'Sichtbar' : 'Versteckt'}
                       </button>
                     </div>
+                    {isGM && (
+                      <button onClick={async () => {
+                        const { error } = await supabase.from('companion_characters').insert({
+                          name: selModel.name,
+                          type: 'npc',
+                          image_url: selModel.image_url,
+                          max_hp: selModel.max_hp,
+                          current_hp: selModel.current_hp ?? selModel.max_hp,
+                          armor_class: selModel.armor_class,
+                          speed: selModel.speed,
+                          str: selModel.model_stats?.str ?? null,
+                          dex: selModel.model_stats?.dex ?? null,
+                          con: selModel.model_stats?.con ?? null,
+                          int: selModel.model_stats?.int ?? null,
+                          wis: selModel.model_stats?.wis ?? null,
+                          cha: selModel.model_stats?.cha ?? null,
+                          notes: selModel.notes,
+                          favorite_dice: (selModel.favorite_dice ?? []).map((a: any) => ({ ...a, id: a.id ?? crypto.randomUUID(), notes: a.notes ?? '' })),
+                          abilities: selModel.abilities ?? [],
+                          created_by: user?.id,
+                          owner_id: user?.id,
+                        })
+                        if (error) alert(`Fehler: ${error.message}`)
+                        else alert(`${selModel.name} wurde in Extras gespeichert!`)
+                      }}
+                        className="w-full flex items-center justify-center gap-1.5 py-1.5 rounded-lg bg-emerald-950/30 border border-emerald-800/40 text-xs text-emerald-400 hover:text-emerald-200">
+                        🐾 Zu Extras speichern
+                      </button>
+                    )}
                     <div>
                       <label className="text-[10px] uppercase font-semibold text-zinc-600 block mb-1">Rotation: {selModel.rotation}°</label>
                       <input type="range" min={0} max={360} step={1} value={selModel.rotation}

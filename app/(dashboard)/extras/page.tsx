@@ -785,13 +785,12 @@ export default function ExtrasPage() {
 
   const load = useCallback(async () => {
     if (!user) return
-    const { data } = await supabase
-      .from('companion_characters')
-      .select('*')
-      .order('name', { ascending: true })
+    let query = supabase.from('companion_characters').select('*').order('name', { ascending: true })
+    if (!isGM) query = query.eq('created_by', user.id)
+    const { data } = await query
     setCompanions((data ?? []) as CompanionCharacter[])
     setLoading(false)
-  }, [user]) // eslint-disable-line react-hooks/exhaustive-deps
+  }, [user, isGM]) // eslint-disable-line react-hooks/exhaustive-deps
 
   useEffect(() => {
     if (!user) return

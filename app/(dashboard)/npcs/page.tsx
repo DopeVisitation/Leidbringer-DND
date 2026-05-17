@@ -12,6 +12,7 @@ interface NPC {
   faction: string | null
   status: NPCStatus
   emoji: string
+  image_url: string | null
   description: string | null
   notes: string | null
   is_visible_to_players: boolean
@@ -36,6 +37,7 @@ const EMOJI_OPTIONS = ['🧙', '🧝', '🧟', '🧛', '👴', '👵', '🧔', '
 const EMPTY_FORM = {
   emoji: '🧙',
   name: '',
+  image_url: '',
   location: '',
   faction: '',
   status: 'unknown' as NPCStatus,
@@ -89,6 +91,7 @@ export default function NPCsPage() {
     setForm({
       emoji: npc.emoji,
       name: npc.name,
+      image_url: npc.image_url ?? '',
       location: npc.location ?? '',
       faction: npc.faction ?? '',
       status: npc.status,
@@ -113,6 +116,7 @@ export default function NPCsPage() {
     const payload = {
       emoji: form.emoji,
       name: form.name.trim(),
+      image_url: form.image_url.trim() || null,
       location: form.location.trim() || null,
       faction: form.faction.trim() || null,
       status: form.status,
@@ -230,7 +234,12 @@ export default function NPCsPage() {
                   className="w-full text-left p-4 flex items-center gap-3 hover:bg-zinc-800/50 transition-colors"
                   onClick={() => setExpandedId(isExpanded ? null : npc.id)}
                 >
-                  <span className="text-2xl flex-shrink-0 select-none">{npc.emoji}</span>
+                  {npc.image_url ? (
+                    // eslint-disable-next-line @next/next/no-img-element
+                    <img src={npc.image_url} alt={npc.name} className="w-10 h-10 rounded-full object-cover flex-shrink-0 border border-zinc-700" onError={e => { (e.target as HTMLImageElement).style.display='none' }} />
+                  ) : (
+                    <span className="text-2xl flex-shrink-0 select-none">{npc.emoji}</span>
+                  )}
                   <div className="flex-1 min-w-0">
                     <div className="flex items-center gap-2 flex-wrap">
                       <span className="text-sm font-semibold text-zinc-100">{npc.name}</span>
@@ -344,6 +353,31 @@ export default function NPCsPage() {
                       {em}
                     </button>
                   ))}
+                </div>
+              </div>
+
+              {/* Image */}
+              <div>
+                <label className="block text-xs font-medium text-zinc-400 mb-1.5">Bild (URL oder Upload)</label>
+                <div className="flex gap-2 items-center">
+                  {form.image_url && (
+                    // eslint-disable-next-line @next/next/no-img-element
+                    <img src={form.image_url} alt="Vorschau" className="w-12 h-12 rounded-lg object-cover border border-zinc-700 flex-shrink-0" onError={e => { (e.target as HTMLImageElement).style.display='none' }} />
+                  )}
+                  <input type="text" placeholder="https://… Bild-URL einfügen"
+                    value={form.image_url}
+                    onChange={e => setForm(p => ({ ...p, image_url: e.target.value }))}
+                    className="flex-1 bg-zinc-800 border border-zinc-700 rounded-lg px-3 py-2 text-sm text-zinc-100 placeholder-zinc-500 focus:outline-none focus:border-amber-500" />
+                  <label className="flex-shrink-0 flex items-center gap-1 px-2.5 py-2 rounded-lg bg-zinc-700 border border-zinc-600 text-xs text-zinc-300 hover:bg-zinc-600 cursor-pointer">
+                    ⬆ Upload
+                    <input type="file" accept="image/*" className="hidden" onChange={async e => {
+                      const file = e.target.files?.[0]; if (!file) return
+                      const fd = new FormData(); fd.append('file', file)
+                      const res = await fetch('/api/upload-map', { method: 'POST', body: fd })
+                      const json = await res.json()
+                      if (json.url) setForm(p => ({ ...p, image_url: json.url }))
+                    }} />
+                  </label>
                 </div>
               </div>
 

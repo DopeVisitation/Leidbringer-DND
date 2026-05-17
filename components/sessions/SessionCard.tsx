@@ -1,7 +1,7 @@
 'use client'
 
 import { useState } from 'react'
-import { MapPin, Monitor, Users, ChevronDown, ChevronUp, ExternalLink, Trash2, Edit2, Save, X } from 'lucide-react'
+import { MapPin, Monitor, Users, ChevronDown, ChevronUp, ExternalLink, Trash2, Edit2, Save, X, CheckSquare } from 'lucide-react'
 import { cn, getSessionColor, getSessionBadgeColor, countAccepted, formatDate, formatTime } from '@/lib/utils'
 import type { Session, ResponseStatus, AttendanceType, User, SessionType } from '@/types'
 import { createClient } from '@/lib/supabase/client'
@@ -174,6 +174,16 @@ export function SessionCard({ session, currentUser, requiredPlayers = 4, onDelet
         <div className="flex items-center gap-1 flex-shrink-0 mt-1">
           {isGM && (
             <>
+              <button
+                onClick={async () => {
+                  await supabase.from('sessions').update({ is_confirmed: !(session as any).is_confirmed }).eq('id', session.id)
+                  onDeleted?.()
+                }}
+                className={`flex items-center gap-1 px-2 py-1 rounded text-xs font-semibold border transition-colors ${(session as any).is_confirmed ? 'bg-emerald-900/30 border-emerald-700/50 text-emerald-300' : 'text-zinc-600 border-zinc-700 hover:text-emerald-400 hover:border-emerald-700'}`}
+                title={(session as any).is_confirmed ? 'Session bestätigt (Klick zum Aufheben)' : 'Session als "Findet Statt" markieren'}>
+                <CheckSquare className="w-3.5 h-3.5" />
+                {(session as any).is_confirmed ? 'Bestätigt' : 'Bestätigen'}
+              </button>
               <button onClick={() => setEditMode(true)}
                 className="p-1.5 text-zinc-600 hover:text-amber-400 transition-colors" title="Session bearbeiten">
                 <Edit2 className="w-4 h-4" />

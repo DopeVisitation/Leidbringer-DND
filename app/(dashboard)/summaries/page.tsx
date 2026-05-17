@@ -96,9 +96,10 @@ export default function SummariesPage() {
 
   const loadAll = useCallback(async () => {
     setLoading(true)
+    // Only show confirmed sessions (is_confirmed = true). For GM: all confirmed. For players: also unlocked.
     const sessionQuery = isGM
-      ? supabase.from('sessions').select('id,title,description,start_date,end_date,is_unlocked_for_summary').order('start_date', { ascending: false })
-      : supabase.from('sessions').select('id,title,description,start_date,end_date,is_unlocked_for_summary').eq('is_unlocked_for_summary', true).order('start_date', { ascending: false })
+      ? supabase.from('sessions').select('id,title,description,start_date,end_date,is_unlocked_for_summary,is_confirmed').eq('is_confirmed', true).order('start_date', { ascending: false })
+      : supabase.from('sessions').select('id,title,description,start_date,end_date,is_unlocked_for_summary,is_confirmed').eq('is_confirmed', true).eq('is_unlocked_for_summary', true).order('start_date', { ascending: false })
     const [{ data: sess }, { data: sums }, { data: cmts }] = await Promise.all([
       sessionQuery,
       supabase.from('session_summaries').select('*'),

@@ -16,9 +16,10 @@ export async function POST(req: NextRequest) {
     return NextResponse.json({ error: 'Ungültige Eingabe.' }, { status: 400 })
   }
 
-  const serviceRoleKey = process.env.SUPABASE_SERVICE_ROLE_KEY
+  // Try both env var names for compatibility
+  const serviceRoleKey = process.env.SUPABASE_SERVICE_ROLE_KEY ?? process.env.SUPABASE_SERVICE_KEY
   if (!serviceRoleKey) {
-    return NextResponse.json({ error: 'Service Role Key nicht konfiguriert.' }, { status: 500 })
+    return NextResponse.json({ error: 'Service Role Key nicht konfiguriert (SUPABASE_SERVICE_KEY fehlt in Vercel).' }, { status: 500 })
   }
 
   const adminClient = createClient(process.env.NEXT_PUBLIC_SUPABASE_URL!, serviceRoleKey, {

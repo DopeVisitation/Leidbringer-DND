@@ -1,27 +1,23 @@
 'use client'
 
 import { useState, useEffect } from 'react'
-import { Map, Plus, X, CheckCircle, XCircle, Star, ChevronDown, ChevronUp, Crown, Sword } from 'lucide-react'
+import { Map, Plus, X, CheckCircle, XCircle, Star, ChevronDown, ChevronUp, Crown, Sword, Trash2, ShieldCheck } from 'lucide-react'
 import { createClient } from '@/lib/supabase/client'
 import { useAuth } from '@/lib/hooks/useAuth'
 import type { Quest, QuestRating, QuestStatus } from '@/types'
 
 const STATUS_CONFIG: Record<QuestStatus, { label: string; color: string; icon: React.ElementType }> = {
-  active:    { label: 'Aktiv',       color: 'text-green-400 bg-green-900/20 border-green-800/50',    icon: Star },
-  completed: { label: 'Abgeschlossen', color: 'text-blue-400 bg-blue-900/20 border-blue-800/50',   icon: CheckCircle },
-  failed:    { label: 'Fehlgeschlagen', color: 'text-red-400 bg-red-900/20 border-red-800/50',       icon: XCircle },
+  active:    { label: 'Aktiv',         color: 'text-green-400 bg-green-900/20 border-green-800/50',   icon: Star },
+  completed: { label: 'Abgeschlossen', color: 'text-blue-400 bg-blue-900/20 border-blue-800/50',     icon: CheckCircle },
+  failed:    { label: 'Fehlgeschlagen', color: 'text-red-400 bg-red-900/20 border-red-800/50',        icon: XCircle },
 }
 
 function StarRating({ value, onChange, color = 'text-amber-400' }: { value: number; onChange?: (v: number) => void; color?: string }) {
   return (
     <div className="flex gap-0.5">
       {[1, 2, 3, 4, 5].map((n) => (
-        <button
-          key={n}
-          type="button"
-          onClick={() => onChange?.(n)}
-          className={`w-5 h-5 transition-colors ${n <= value ? color : 'text-zinc-700'} ${onChange ? 'hover:scale-110' : 'cursor-default'}`}
-        >
+        <button key={n} type="button" onClick={() => onChange?.(n)}
+          className={`w-5 h-5 transition-colors ${n <= value ? color : 'text-zinc-700'} ${onChange ? 'hover:scale-110' : 'cursor-default'}`}>
           <Star className="w-full h-full" fill={n <= value ? 'currentColor' : 'none'} />
         </button>
       ))}
@@ -34,11 +30,13 @@ function avgRating(ratings: QuestRating[], key: 'player_interest' | 'character_i
   return ratings.reduce((s, r) => s + r[key], 0) / ratings.length
 }
 
-function QuestCard({ quest, currentUser, isGM, onStatusChange }: {
-  quest: Quest & { ratings: QuestRating[] }
+function QuestCard({ quest, currentUser, isGM, onStatusChange, onDelete, onApprove }: {
+  quest: Quest & { ratings: QuestRating[]; is_approved?: boolean }
   currentUser: { id: string }
   isGM: boolean
   onStatusChange: (id: string, status: QuestStatus) => void
+  onDelete: (id: string) => void
+  onApprove: (id: string) => void
 }) {
   const supabase = createClient()
   const [expanded, setExpanded] = useState(false)
@@ -47,6 +45,7 @@ function QuestCard({ quest, currentUser, isGM, onStatusChange }: {
     return { player_interest: mine?.player_interest ?? 0, character_interest: mine?.character_interest ?? 0 }
   })
   const [savingRating, setSavingRating] = useState(false)
+  const [confirmDelete, setConfirmDelete] = useState(false)
 
   const saveRating = async (field: 'player_interest' | 'character_interest', val: number) => {
     const newRating = { ...myRating, [field]: val }
@@ -66,10 +65,10 @@ function QuestCard({ quest, currentUser, isGM, onStatusChange }: {
   const avgCharacter = avgRating(quest.ratings, 'character_interest')
   const ratingCount  = quest.ratings.length
   const statusCfg    = STATUS_CONFIG[quest.status]
-  const StatusIcon   = statusCfg.icon
+  const isPending    = quest.is_approved === false
 
   return (
-    <div className={`bg-zinc-900 border rounded-xl overflow-hidden ${quest.type === 'main' ? 'border-amber-700/50' : 'border-zinc-800'}`}>
+    <div className={`bg-zinc-900 border rounded-xl overflow-hidden ${quest.type === 'main' ? 'border-amber-700/50' : isPending ? 'border-orange-700/50' : 'border-zinc-800'}`}>
       <div className="p-4">
         <div className="flex items-start gap-3">
           <div className="flex-shrink-0 mt-0.5">
@@ -82,28 +81,53 @@ function QuestCard({ quest, currentUser, isGM, onStatusChange }: {
               <div>
                 <div className="flex items-center gap-2 flex-wrap">
                   <h3 className="text-sm font-semibold text-zinc-100">{quest.title}</h3>
-                  <span className={`text-xs px-2 py-0.5 rounded-full border ${statusCfg.color}`}>
-                    {statusCfg.label}
-                  </span>
+                  {isPending ? (
+                    <span className="text-xs px-2 py-0.5 rounded-full border text-orange-400 bg-orange-900/20 border-orange-800/50">
+                      ⏳ Ausstehend
+                    </span>
+                  ) : (
+                    <span className={`text-xs px-2 py-0.5 rounded-full border ${statusCfg.color}`}>
+                      {statusCfg.label}
+                    </span>
+                  )}
                 </div>
                 <p className="text-xs text-zinc-500 mt-0.5">
                   {quest.type === 'main' ? 'Hauptquest' : `Nebenquest von ${(quest.creator as any)?.username ?? '?'}`}
                 </p>
               </div>
-              {isGM && (
-                <select
-                  value={quest.status}
-                  onChange={(e) => onStatusChange(quest.id, e.target.value as QuestStatus)}
-                  className="text-xs bg-zinc-800 border border-zinc-700 rounded px-2 py-1 text-zinc-300 focus:outline-none focus:border-amber-500"
-                >
-                  <option value="active">Aktiv</option>
-                  <option value="completed">Abgeschlossen</option>
-                  <option value="failed">Fehlgeschlagen</option>
-                </select>
-              )}
+              <div className="flex items-center gap-1">
+                {isGM && isPending && (
+                  <button onClick={() => onApprove(quest.id)}
+                    className="flex items-center gap-1 px-2 py-1 rounded bg-emerald-900/30 border border-emerald-700/50 text-xs text-emerald-300 hover:bg-emerald-900/60 transition-colors"
+                    title="Quest freischalten">
+                    <ShieldCheck className="w-3 h-3" /> Genehmigen
+                  </button>
+                )}
+                {isGM && (
+                  <select value={quest.status}
+                    onChange={(e) => onStatusChange(quest.id, e.target.value as QuestStatus)}
+                    className="text-xs bg-zinc-800 border border-zinc-700 rounded px-2 py-1 text-zinc-300 focus:outline-none focus:border-amber-500">
+                    <option value="active">Aktiv</option>
+                    <option value="completed">Abgeschlossen</option>
+                    <option value="failed">Fehlgeschlagen</option>
+                  </select>
+                )}
+                {isGM && (
+                  confirmDelete ? (
+                    <div className="flex items-center gap-1">
+                      <button onClick={() => onDelete(quest.id)} className="text-xs px-2 py-1 rounded bg-red-600 text-white font-medium">Löschen</button>
+                      <button onClick={() => setConfirmDelete(false)} className="text-xs px-2 py-1 rounded bg-zinc-700 text-zinc-300">Nein</button>
+                    </div>
+                  ) : (
+                    <button onClick={() => setConfirmDelete(true)}
+                      className="p-1.5 text-zinc-600 hover:text-red-400 transition-colors" title="Quest löschen">
+                      <Trash2 className="w-3.5 h-3.5" />
+                    </button>
+                  )
+                )}
+              </div>
             </div>
 
-            {/* Durchschnittsbewertungen */}
             {ratingCount > 0 && (
               <div className="flex gap-4 mt-2">
                 <div className="flex items-center gap-1.5">
@@ -122,11 +146,8 @@ function QuestCard({ quest, currentUser, isGM, onStatusChange }: {
         </div>
       </div>
 
-      {/* Expand/Collapse */}
-      <button
-        onClick={() => setExpanded(!expanded)}
-        className="w-full px-4 py-2 flex items-center justify-between border-t border-zinc-800 text-xs text-zinc-500 hover:bg-zinc-800 transition-colors"
-      >
+      <button onClick={() => setExpanded(!expanded)}
+        className="w-full px-4 py-2 flex items-center justify-between border-t border-zinc-800 text-xs text-zinc-500 hover:bg-zinc-800 transition-colors">
         <span>{expanded ? 'Weniger anzeigen' : 'Beschreibung & Bewertung'}</span>
         {expanded ? <ChevronUp className="w-3.5 h-3.5" /> : <ChevronDown className="w-3.5 h-3.5" />}
       </button>
@@ -136,26 +157,20 @@ function QuestCard({ quest, currentUser, isGM, onStatusChange }: {
           {quest.description && (
             <p className="text-sm text-zinc-400 whitespace-pre-wrap">{quest.description}</p>
           )}
-
-          {/* Eigene Bewertung */}
           <div className="space-y-2">
             <p className="text-xs font-medium text-zinc-400">Deine Bewertung</p>
             <div className="grid grid-cols-2 gap-3">
               <div className="bg-zinc-800 rounded-lg p-3 space-y-1.5">
                 <p className="text-xs text-blue-400 font-medium">Als Spieler</p>
                 <StarRating value={myRating.player_interest} onChange={(v) => saveRating('player_interest', v)} color="text-blue-400" />
-                <p className="text-xs text-zinc-600">Wie sehr interessiert dich diese Quest als Spieler?</p>
               </div>
               <div className="bg-zinc-800 rounded-lg p-3 space-y-1.5">
                 <p className="text-xs text-amber-400 font-medium">Als Charakter</p>
                 <StarRating value={myRating.character_interest} onChange={(v) => saveRating('character_interest', v)} color="text-amber-400" />
-                <p className="text-xs text-zinc-600">Würde dein Charakter diese Quest verfolgen?</p>
               </div>
             </div>
             {savingRating && <p className="text-xs text-zinc-500">Speichern...</p>}
           </div>
-
-          {/* Alle Bewertungen (für GM) */}
           {isGM && quest.ratings.length > 0 && (
             <div className="space-y-1">
               <p className="text-xs font-medium text-zinc-400">{quest.ratings.length} Bewertung(en)</p>
@@ -177,7 +192,7 @@ function QuestCard({ quest, currentUser, isGM, onStatusChange }: {
 export default function QuestsPage() {
   const supabase = createClient()
   const { user, isGM } = useAuth()
-  const [quests, setQuests] = useState<(Quest & { ratings: QuestRating[] })[]>([])
+  const [quests, setQuests] = useState<(Quest & { ratings: QuestRating[]; is_approved?: boolean })[]>([])
   const [showForm, setShowForm] = useState(false)
   const [form, setForm] = useState({ title: '', description: '', type: 'side' as 'main' | 'side' })
   const [saving, setSaving] = useState(false)
@@ -191,37 +206,58 @@ export default function QuestsPage() {
       .on('postgres_changes', { event: '*', schema: 'public', table: 'quest_ratings' }, loadQuests)
       .subscribe()
     return () => { supabase.removeChannel(channel) }
-  }, [])
+  }, []) // eslint-disable-line react-hooks/exhaustive-deps
 
   const loadQuests = async () => {
-    const { data } = await supabase
+    let query = supabase
       .from('quests')
       .select('*, creator:profiles!quests_created_by_fkey(id,username), ratings:quest_ratings(*, user:profiles(id,username))')
       .order('type', { ascending: true })
       .order('created_at', { ascending: false })
-    if (data) setQuests(data as (Quest & { ratings: QuestRating[] })[])
+    // Players only see approved quests
+    if (!isGM) query = query.eq('is_approved', true)
+    const { data } = await query
+    if (data) setQuests(data as any[])
   }
 
   const handleCreate = async (e: React.FormEvent) => {
     e.preventDefault()
     if (!user) return
     setSaving(true)
+    // Player-created side quests need GM approval
+    const needsApproval = !isGM && form.type === 'side'
     await supabase.from('quests').insert({
       title: form.title,
       description: form.description || null,
       type: form.type,
       created_by: user.id,
+      is_approved: !needsApproval,
     })
     setForm({ title: '', description: '', type: 'side' })
     setShowForm(false)
     setSaving(false)
+    loadQuests()
   }
 
   const handleStatusChange = async (id: string, status: QuestStatus) => {
     await supabase.from('quests').update({ status, updated_at: new Date().toISOString() }).eq('id', id)
+    loadQuests()
   }
 
-  const filtered = filter === 'all' ? quests : quests.filter((q) => q.status === filter)
+  const handleDelete = async (id: string) => {
+    await supabase.from('quests').delete().eq('id', id)
+    loadQuests()
+  }
+
+  const handleApprove = async (id: string) => {
+    await supabase.from('quests').update({ is_approved: true }).eq('id', id)
+    loadQuests()
+  }
+
+  // Separate pending quests (shown to GM only at top)
+  const pendingQuests = isGM ? quests.filter(q => q.is_approved === false) : []
+  const approvedQuests = quests.filter(q => q.is_approved !== false)
+  const filtered = filter === 'all' ? approvedQuests : approvedQuests.filter((q) => q.status === filter)
   const mainQuests = filtered.filter((q) => q.type === 'main')
   const sideQuests = filtered.filter((q) => q.type === 'side')
 
@@ -234,80 +270,74 @@ export default function QuestsPage() {
           <Map className="w-6 h-6 text-amber-400" />
           <h1 className="text-xl font-bold text-zinc-100">Quests</h1>
         </div>
-        <button
-          onClick={() => setShowForm(!showForm)}
-          className="flex items-center gap-2 px-4 py-2 rounded-lg bg-amber-600 hover:bg-amber-500 text-sm font-semibold text-white transition-colors"
-        >
+        <button onClick={() => setShowForm(!showForm)}
+          className="flex items-center gap-2 px-4 py-2 rounded-lg bg-amber-600 hover:bg-amber-500 text-sm font-semibold text-white transition-colors">
           <Plus className="w-4 h-4" />
           Quest erstellen
         </button>
       </div>
 
-      {/* Formular */}
       {showForm && (
         <div className="bg-zinc-900 border border-zinc-800 rounded-xl p-4 space-y-3">
           <div className="flex items-center justify-between">
             <p className="text-sm font-semibold text-zinc-200">Neue Quest</p>
-            <button onClick={() => setShowForm(false)} className="text-zinc-600 hover:text-zinc-300">
-              <X className="w-4 h-4" />
-            </button>
+            <button onClick={() => setShowForm(false)} className="text-zinc-600 hover:text-zinc-300"><X className="w-4 h-4" /></button>
           </div>
+          {!isGM && (
+            <p className="text-xs text-amber-400/80 bg-amber-900/10 border border-amber-800/30 rounded-lg px-3 py-2">
+              ℹ️ Deine Nebenquest wird erst sichtbar, nachdem der GM sie genehmigt hat.
+            </p>
+          )}
           <form onSubmit={handleCreate} className="space-y-3">
-            <input
-              type="text"
-              required
-              placeholder="Quest-Titel *"
-              value={form.title}
+            <input type="text" required placeholder="Quest-Titel *" value={form.title}
               onChange={(e) => setForm((p) => ({ ...p, title: e.target.value }))}
-              className="w-full bg-zinc-800 border border-zinc-700 rounded-lg px-3 py-2.5 text-sm text-zinc-100 placeholder-zinc-500 focus:outline-none focus:border-amber-500"
-            />
-            <textarea
-              rows={3}
-              placeholder="Beschreibung (optional)"
-              value={form.description}
+              className="w-full bg-zinc-800 border border-zinc-700 rounded-lg px-3 py-2.5 text-sm text-zinc-100 placeholder-zinc-500 focus:outline-none focus:border-amber-500" />
+            <textarea rows={3} placeholder="Beschreibung (optional)" value={form.description}
               onChange={(e) => setForm((p) => ({ ...p, description: e.target.value }))}
-              className="w-full bg-zinc-800 border border-zinc-700 rounded-lg px-3 py-2 text-sm text-zinc-100 placeholder-zinc-500 focus:outline-none focus:border-amber-500 resize-none"
-            />
+              className="w-full bg-zinc-800 border border-zinc-700 rounded-lg px-3 py-2 text-sm text-zinc-100 placeholder-zinc-500 focus:outline-none focus:border-amber-500 resize-none" />
             {isGM && (
               <div className="grid grid-cols-2 gap-2">
                 {(['main', 'side'] as const).map((t) => (
-                  <button
-                    key={t}
-                    type="button"
-                    onClick={() => setForm((p) => ({ ...p, type: t }))}
-                    className={`flex items-center justify-center gap-2 p-3 rounded-lg border text-sm font-medium transition-all ${form.type === t ? 'bg-amber-600/20 border-amber-500 text-amber-300' : 'bg-zinc-800 border-zinc-700 text-zinc-400 hover:border-zinc-500'}`}
-                  >
+                  <button key={t} type="button" onClick={() => setForm((p) => ({ ...p, type: t }))}
+                    className={`flex items-center justify-center gap-2 p-3 rounded-lg border text-sm font-medium transition-all ${form.type === t ? 'bg-amber-600/20 border-amber-500 text-amber-300' : 'bg-zinc-800 border-zinc-700 text-zinc-400 hover:border-zinc-500'}`}>
                     {t === 'main' ? <Crown className="w-4 h-4" /> : <Sword className="w-4 h-4" />}
                     {t === 'main' ? 'Hauptquest' : 'Nebenquest'}
                   </button>
                 ))}
               </div>
             )}
-            <button
-              type="submit"
-              disabled={saving}
-              className="w-full py-2.5 rounded-lg bg-amber-600 hover:bg-amber-500 disabled:opacity-50 text-sm font-bold text-white transition-colors"
-            >
+            <button type="submit" disabled={saving}
+              className="w-full py-2.5 rounded-lg bg-amber-600 hover:bg-amber-500 disabled:opacity-50 text-sm font-bold text-white transition-colors">
               {saving ? 'Wird erstellt...' : 'Quest erstellen'}
             </button>
           </form>
         </div>
       )}
 
+      {/* Pending approval (GM only) */}
+      {pendingQuests.length > 0 && (
+        <div className="space-y-3">
+          <div className="flex items-center gap-2">
+            <span className="text-orange-400">⏳</span>
+            <h2 className="text-sm font-semibold text-orange-400 uppercase tracking-wide">Warten auf Genehmigung ({pendingQuests.length})</h2>
+          </div>
+          {pendingQuests.map((q) => (
+            <QuestCard key={q.id} quest={q} currentUser={user} isGM={isGM}
+              onStatusChange={handleStatusChange} onDelete={handleDelete} onApprove={handleApprove} />
+          ))}
+        </div>
+      )}
+
       {/* Filter */}
       <div className="flex gap-2 flex-wrap">
         {(['all', 'active', 'completed', 'failed'] as const).map((f) => (
-          <button
-            key={f}
-            onClick={() => setFilter(f)}
-            className={`px-3 py-1.5 rounded-lg text-xs font-medium transition-colors ${filter === f ? 'bg-amber-600 text-white' : 'bg-zinc-800 text-zinc-400 hover:bg-zinc-700'}`}
-          >
+          <button key={f} onClick={() => setFilter(f)}
+            className={`px-3 py-1.5 rounded-lg text-xs font-medium transition-colors ${filter === f ? 'bg-amber-600 text-white' : 'bg-zinc-800 text-zinc-400 hover:bg-zinc-700'}`}>
             {f === 'all' ? 'Alle' : STATUS_CONFIG[f].label}
           </button>
         ))}
       </div>
 
-      {/* Hauptquests */}
       {mainQuests.length > 0 && (
         <div className="space-y-3">
           <div className="flex items-center gap-2">
@@ -315,12 +345,12 @@ export default function QuestsPage() {
             <h2 className="text-sm font-semibold text-amber-400 uppercase tracking-wide">Hauptquests</h2>
           </div>
           {mainQuests.map((q) => (
-            <QuestCard key={q.id} quest={q} currentUser={user} isGM={isGM} onStatusChange={handleStatusChange} />
+            <QuestCard key={q.id} quest={q} currentUser={user} isGM={isGM}
+              onStatusChange={handleStatusChange} onDelete={handleDelete} onApprove={handleApprove} />
           ))}
         </div>
       )}
 
-      {/* Nebenquests */}
       {sideQuests.length > 0 && (
         <div className="space-y-3">
           <div className="flex items-center gap-2">
@@ -328,12 +358,13 @@ export default function QuestsPage() {
             <h2 className="text-sm font-semibold text-zinc-400 uppercase tracking-wide">Nebenquests</h2>
           </div>
           {sideQuests.map((q) => (
-            <QuestCard key={q.id} quest={q} currentUser={user} isGM={isGM} onStatusChange={handleStatusChange} />
+            <QuestCard key={q.id} quest={q} currentUser={user} isGM={isGM}
+              onStatusChange={handleStatusChange} onDelete={handleDelete} onApprove={handleApprove} />
           ))}
         </div>
       )}
 
-      {filtered.length === 0 && (
+      {filtered.length === 0 && pendingQuests.length === 0 && (
         <div className="text-center text-zinc-600 py-16">
           <Map className="w-10 h-10 mx-auto mb-3 opacity-30" />
           <p className="text-sm">Keine Quests gefunden.</p>
