@@ -70,6 +70,39 @@ interface CombatLogEntry {
   is_gm_action: boolean; created_at: string; map_id: string
 }
 
+// ─── V20: Models & Assets ────────────────────────────────────────────────────
+interface PlacedModel {
+  id: string
+  map_id: string
+  name: string
+  image_url: string
+  col: number
+  row: number
+  span: number
+  rotation: number
+  is_hidden: boolean
+  z_index: number
+}
+
+interface PlacedAsset {
+  id: string
+  map_id: string
+  name: string
+  image_url: string
+  x_pct: number
+  y_pct: number
+  width_cells: number
+  height_cells: number
+  rotation: number
+  z_index: number
+}
+
+interface TokenImage {
+  name: string
+  url: string
+  filename: string
+}
+
 // ─── Constants ────────────────────────────────────────────────────────────────
 const TOKEN_ICONS = [
   // Spieler / Helden
@@ -801,6 +834,30 @@ export default function BattleMapPage() {
   const [combatLog, setCombatLog] = useState<CombatLogEntry[]>([])
   const [logInput, setLogInput] = useState('')
 
+  // ── V20: Models & Assets ──
+  const [placedModels, setPlacedModels] = useState<PlacedModel[]>([])
+  const [placedAssets, setPlacedAssets] = useState<PlacedAsset[]>([])
+  const [sidebarTab, setSidebarTab] = useState<'staging' | 'models' | 'assets'>('staging')
+  // Model picker
+  const [showModelPicker, setShowModelPicker] = useState(false)
+  const [modelImages, setModelImages] = useState<TokenImage[]>([])
+  const [modelSearch, setModelSearch] = useState('')
+  const [selectedModelImage, setSelectedModelImage] = useState<TokenImage | null>(null)
+  const [modelForm, setModelForm] = useState({ name: '', span: 1, rotation: 0 })
+  const [deployingModelData, setDeployingModelData] = useState<{ image_url: string; name: string; span: number; rotation: number } | null>(null)
+  const [selectedModelId, setSelectedModelId] = useState<string | null>(null)
+  // Asset picker
+  const [showAssetPicker, setShowAssetPicker] = useState(false)
+  const [assetImages, setAssetImages] = useState<TokenImage[]>([])
+  const [assetSearch, setAssetSearch] = useState('')
+  const [selectedAssetImage, setSelectedAssetImage] = useState<TokenImage | null>(null)
+  const [assetForm, setAssetForm] = useState({ name: '', width_cells: 2, height_cells: 2, rotation: 0 })
+  const [deployingAssetData, setDeployingAssetData] = useState<{ image_url: string; name: string; width_cells: number; height_cells: number; rotation: number } | null>(null)
+  const [selectedAssetId, setSelectedAssetId] = useState<string | null>(null)
+  // Map form preset gallery
+  const [mapPresets, setMapPresets] = useState<TokenImage[]>([])
+  const [mapPresetsLoaded, setMapPresetsLoaded] = useState(false)
+
   // Drag & Drop – all drag state in ref to avoid stale closures
   const dragStateRef = useRef<{
     tokenId: string; startX: number; startY: number
@@ -1068,7 +1125,7 @@ export default function BattleMapPage() {
   // ── Arrow key movement + ESC for deploy cancel ──
   useEffect(() => {
     const onKey = (e: KeyboardEvent) => {
-      if (e.key === 'Escape') { setDeployingTokenId(null); return }
+      if (e.key === 'Escape') { setDeployingTokenId(null); setDeployingModelData(null); setDeployingAssetData(null); return }
       if (!selectedToken || !activeMap) return
       if (e.target instanceof HTMLInputElement || e.target instanceof HTMLTextAreaElement || e.target instanceof HTMLSelectElement) return
       const dirs: Record<string, [number, number]> = {
@@ -1193,6 +1250,109 @@ export default function BattleMapPage() {
     setCombatLog((data ?? []) as CombatLogEntry[])
   }, [supabase])
 
+  // ── V20: Load models & assets ──
+  const loadPlacedModels = useCallback(async (mapId: string) => {
+    const { data } = await supabase.from('battle_placed_models').select('*').eq('map_id', mapId).order('z_index')
+    setPlacedModels((data ?? []) as PlacedModel[])
+  }, [supabase])
+
+  const loadPlacedAssets = useCallback(async (mapId: string) => {
+    const { data } = await supabase.from('battle_placed_assets').select('*').eq('map_id', mapId).order('z_index')
+    setPlacedAssets((data ?? []) as PlacedAsset[])
+  }, [supabase])
+
+  const loadModelImages = useCallback(async () => {
+    const res = await fetch('/api/tokens?category=creatures')
+    const json = await res.json()
+    setModelImages(json.images ?? [])
+  }, [])
+
+  const loadAssetImages = useCallback(async () => {
+    const res = await fetch('/api/tokens?category=assets')
+    const json = await res.json()
+    setAssetImages(json.images ?? [])
+  }, [])
+
+  const loadMapPresets = useCallback(async () => {
+    if (mapPresetsLoaded) return
+    const res = await fetch('/api/tokens?category=maps')
+    const json = await res.json()
+    setMapPresets(json.images ?? [])
+    setMapPresetsLoaded(true)
+  }, [mapPresetsLoaded])
+
+  // ── V20: Model overlap check ──
+  const modelOverlaps = (col: number, row: number, span: number, excludeId?: string): boolean => {
+    const spanInt = Math.max(1, Math.ceil(span))
+    // Check against other models
+    for (const m of placedModels) {
+      if (m.id === excludeId) continue
+      const ms = Math.max(1, Math.ceil(m.span))
+      if (!(col + spanInt <= m.col || col >= m.col + ms || row + spanInt <= m.row || row >= m.row + ms)) return true
+    }
+    // Check against map tokens
+    for (const t of mapTokens) {
+      const ts = Math.max(1, Math.ceil(getSizeSpan(t.token_size || 'medium')))
+      if (!(col + spanInt <= t.col || col >= t.col + ts || row + spanInt <= t.row || row >= t.row + ts)) return true
+    }
+    return false
+  }
+
+  // ── V20: Place model on grid ──
+  const placeModelAt = async (col: number, row: number) => {
+    if (!deployingModelData || !activeMap) return
+    if (modelOverlaps(col, row, deployingModelData.span)) return
+    const maxZ = placedModels.reduce((m, x) => Math.max(m, x.z_index), 0)
+    const { data } = await supabase.from('battle_placed_models').insert({
+      map_id: activeMap.id,
+      name: deployingModelData.name,
+      image_url: deployingModelData.image_url,
+      col, row,
+      span: deployingModelData.span,
+      rotation: deployingModelData.rotation,
+      is_hidden: false,
+      z_index: maxZ + 1,
+    }).select().single()
+    if (data) setPlacedModels(prev => [...prev, data as PlacedModel])
+    setDeployingModelData(null)
+  }
+
+  const deleteModel = async (id: string) => {
+    await supabase.from('battle_placed_models').delete().eq('id', id)
+    setPlacedModels(prev => prev.filter(m => m.id !== id))
+    if (selectedModelId === id) setSelectedModelId(null)
+  }
+
+  const toggleModelHidden = async (m: PlacedModel) => {
+    await supabase.from('battle_placed_models').update({ is_hidden: !m.is_hidden }).eq('id', m.id)
+    setPlacedModels(prev => prev.map(x => x.id === m.id ? { ...x, is_hidden: !m.is_hidden } : x))
+  }
+
+  // ── V20: Place asset on map (free position) ──
+  const placeAssetAt = async (xPct: number, yPct: number) => {
+    if (!deployingAssetData || !activeMap) return
+    const maxZ = placedAssets.reduce((m, x) => Math.max(m, x.z_index), 0)
+    const { data } = await supabase.from('battle_placed_assets').insert({
+      map_id: activeMap.id,
+      name: deployingAssetData.name,
+      image_url: deployingAssetData.image_url,
+      x_pct: xPct,
+      y_pct: yPct,
+      width_cells: deployingAssetData.width_cells,
+      height_cells: deployingAssetData.height_cells,
+      rotation: deployingAssetData.rotation,
+      z_index: Math.max(1, maxZ + 1),
+    }).select().single()
+    if (data) setPlacedAssets(prev => [...prev, data as PlacedAsset])
+    setDeployingAssetData(null)
+  }
+
+  const deleteAsset = async (id: string) => {
+    await supabase.from('battle_placed_assets').delete().eq('id', id)
+    setPlacedAssets(prev => prev.filter(a => a.id !== id))
+    if (selectedAssetId === id) setSelectedAssetId(null)
+  }
+
   // ── Encounter helpers ──
   const loadEncounters = useCallback(async () => {
     const { data } = await supabase.from('encounters').select('*').order('created_at', { ascending: false })
@@ -1275,6 +1435,8 @@ export default function BattleMapPage() {
     if (!activeMap) return
     loadTokens(activeMap.id)
     loadCombatLog(activeMap.id)
+    loadPlacedModels(activeMap.id)
+    loadPlacedAssets(activeMap.id)
     const channel = supabase.channel('battle_' + activeMap.id)
       .on('postgres_changes', { event: '*', schema: 'public', table: 'battle_tokens', filter: `map_id=eq.${activeMap.id}` },
         () => loadTokens(activeMap.id))
@@ -1283,8 +1445,21 @@ export default function BattleMapPage() {
       .on('postgres_changes', { event: 'INSERT', schema: 'public', table: 'combat_log', filter: `map_id=eq.${activeMap.id}` },
         () => loadCombatLog(activeMap.id))
       .subscribe()
-    return () => { supabase.removeChannel(channel); supabase.removeChannel(logChannel) }
-  }, [activeMap?.id, loadTokens, loadCombatLog, supabase])
+    const modelsChannel = supabase.channel('placed_models_' + activeMap.id)
+      .on('postgres_changes', { event: '*', schema: 'public', table: 'battle_placed_models', filter: `map_id=eq.${activeMap.id}` },
+        () => loadPlacedModels(activeMap.id))
+      .subscribe()
+    const assetsChannel = supabase.channel('placed_assets_' + activeMap.id)
+      .on('postgres_changes', { event: '*', schema: 'public', table: 'battle_placed_assets', filter: `map_id=eq.${activeMap.id}` },
+        () => loadPlacedAssets(activeMap.id))
+      .subscribe()
+    return () => {
+      supabase.removeChannel(channel)
+      supabase.removeChannel(logChannel)
+      supabase.removeChannel(modelsChannel)
+      supabase.removeChannel(assetsChannel)
+    }
+  }, [activeMap?.id, loadTokens, loadCombatLog, loadPlacedModels, loadPlacedAssets, supabase])
 
   // ── V17: Dice wall realtime ──
   useEffect(() => {
@@ -1601,6 +1776,20 @@ export default function BattleMapPage() {
     // ── V19: Click-to-deploy mode ──
     if (deployingTokenId) {
       deployTokenAt(deployingTokenId, cell.col, cell.row)
+      return
+    }
+    // ── V20: Deploy model ──
+    if (deployingModelData) {
+      placeModelAt(cell.col, cell.row)
+      return
+    }
+    // ── V20: Deploy asset (convert cell click to % position) ──
+    if (deployingAssetData && activeMap) {
+      const mapW = activeMap.grid_cols * cs
+      const mapH = activeMap.grid_rows * cs
+      const xPct = ((cell.col * cs + cs / 2 - ox) / mapW) * 100
+      const yPct = ((cell.row * cs + cs / 2 - oy) / mapH) * 100
+      placeAssetAt(Math.max(0, Math.min(100, xPct)), Math.max(0, Math.min(100, yPct)))
       return
     }
     if (terrainMode && isGM) { toggleTerrain(cell.col, cell.row); return }
@@ -2018,11 +2207,43 @@ export default function BattleMapPage() {
       {showMapForm && isGM && (
         <div className="flex-shrink-0 px-4 py-3 bg-zinc-900/80 border-b border-zinc-800 space-y-2">
           <p className="text-xs font-semibold text-zinc-400">Neue Karte erstellen</p>
-          <div className="flex flex-wrap gap-2">
+          <div className="flex flex-wrap gap-2 items-center">
             <input className="bg-zinc-800 border border-zinc-700 rounded px-2 py-1.5 text-sm text-zinc-100 placeholder-zinc-600 focus:outline-none focus:border-zinc-500"
               placeholder="Name" value={newMapForm.name} onChange={e => setNewMapForm(f => ({...f, name: e.target.value}))} />
             <input className="flex-1 min-w-40 bg-zinc-800 border border-zinc-700 rounded px-2 py-1.5 text-sm text-zinc-100 placeholder-zinc-600 focus:outline-none focus:border-zinc-500"
               placeholder="Bild-URL (optional)" value={newMapForm.image_url} onChange={e => setNewMapForm(f => ({...f, image_url: e.target.value}))} />
+            {/* V20: Upload button */}
+            <label className="flex items-center gap-1 px-2.5 py-1.5 rounded bg-zinc-700/60 border border-zinc-600/60 text-xs text-zinc-300 hover:bg-zinc-700 cursor-pointer">
+              ⬆ Von PC hochladen
+              <input type="file" accept="image/*" className="hidden" onChange={async e => {
+                const file = e.target.files?.[0]; if (!file) return
+                const fd = new FormData(); fd.append('file', file)
+                const res = await fetch('/api/upload-map', { method: 'POST', body: fd })
+                const json = await res.json()
+                if (json.url) setNewMapForm(f => ({ ...f, image_url: json.url, name: f.name || json.name }))
+              }} />
+            </label>
+          </div>
+          {/* V20: Preset map gallery */}
+          <div>
+            <button
+              onClick={() => loadMapPresets()}
+              className="text-[10px] text-zinc-600 hover:text-zinc-400 underline mb-1">
+              {mapPresetsLoaded ? 'Preset-Maps' : 'Preset-Maps laden'}
+            </button>
+            {mapPresets.length > 0 && (
+              <div className="flex flex-wrap gap-1.5 mt-1 max-h-24 overflow-y-auto">
+                {mapPresets.map(img => (
+                  <button key={img.filename} onClick={() => setNewMapForm(f => ({ ...f, image_url: img.url, name: f.name || img.name }))}
+                    title={img.name}
+                    className={`relative rounded overflow-hidden border transition-all ${newMapForm.image_url === img.url ? 'border-amber-500' : 'border-zinc-700/60 hover:border-zinc-500'}`}>
+                    {/* eslint-disable-next-line @next/next/no-img-element */}
+                    <img src={img.url} alt={img.name} className="w-16 h-10 object-cover" />
+                    <div className="absolute inset-x-0 bottom-0 bg-black/60 text-[8px] text-zinc-200 truncate px-0.5">{img.name}</div>
+                  </button>
+                ))}
+              </div>
+            )}
           </div>
           <div className="flex gap-2">
             <button onClick={createMap} className="px-4 py-1.5 rounded bg-zinc-700 hover:bg-zinc-600 text-xs font-bold text-zinc-200">Erstellen</button>
@@ -2160,6 +2381,197 @@ export default function BattleMapPage() {
             notes: editingToken.notes ?? '', token_size: editingToken.token_size ?? 'medium',
           }}
           onSave={saveEditedToken} onClose={() => setEditingToken(null)} />
+      )}
+
+      {/* ── V20: Model Picker Modal ── */}
+      {showModelPicker && isGM && (
+        <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/80 backdrop-blur-sm p-4">
+          <div className="bg-zinc-950 border border-zinc-700/80 rounded-2xl w-full max-w-xl max-h-[85vh] flex flex-col shadow-2xl shadow-black/60">
+            <div className="flex items-center gap-2 px-5 py-4 border-b border-zinc-800 flex-shrink-0">
+              <span className="text-xl">🐉</span>
+              <p className="flex-1 font-bold text-zinc-100">Modell platzieren</p>
+              <button onClick={() => { setShowModelPicker(false); setSelectedModelImage(null) }} className="text-zinc-500 hover:text-zinc-300"><X className="w-5 h-5" /></button>
+            </div>
+            <div className="overflow-y-auto flex-1 p-4 space-y-3">
+              {!selectedModelImage ? (
+                <>
+                  <input
+                    className="w-full bg-zinc-800 border border-zinc-700 rounded-lg px-3 py-2 text-sm text-zinc-100 placeholder-zinc-500 focus:outline-none focus:border-red-700"
+                    placeholder="Suche…"
+                    value={modelSearch}
+                    onChange={e => setModelSearch(e.target.value)}
+                  />
+                  {modelImages.length === 0 && (
+                    <p className="text-xs text-zinc-600 text-center py-4">Keine Kreatur-Bilder gefunden (public/tokens/creatures/)</p>
+                  )}
+                  <div className="grid grid-cols-5 gap-2">
+                    {modelImages
+                      .filter(img => img.name.toLowerCase().includes(modelSearch.toLowerCase()))
+                      .map(img => (
+                        <button key={img.filename} onClick={() => { setSelectedModelImage(img); setModelForm(f => ({ ...f, name: img.name })) }}
+                          className="flex flex-col items-center gap-1 p-1 rounded-lg border border-zinc-700/60 hover:border-zinc-500 bg-zinc-900/60 hover:bg-zinc-800/60 transition-colors">
+                          {/* eslint-disable-next-line @next/next/no-img-element */}
+                          <img src={img.url} alt={img.name} className="w-14 h-14 object-contain rounded" />
+                          <span className="text-[9px] text-zinc-400 text-center leading-tight line-clamp-2">{img.name}</span>
+                        </button>
+                      ))
+                    }
+                  </div>
+                </>
+              ) : (
+                <div className="space-y-4">
+                  <div className="flex items-center gap-3">
+                    {/* eslint-disable-next-line @next/next/no-img-element */}
+                    <img src={selectedModelImage.url} alt={selectedModelImage.name} className="w-16 h-16 object-contain rounded border border-zinc-700" />
+                    <div className="flex-1">
+                      <p className="text-sm font-semibold text-zinc-200">{selectedModelImage.name}</p>
+                      <button onClick={() => setSelectedModelImage(null)} className="text-[11px] text-zinc-600 hover:text-zinc-400 underline">← Anderes Bild</button>
+                    </div>
+                  </div>
+                  <div>
+                    <label className="text-[10px] uppercase font-semibold text-zinc-500 block mb-1">Name</label>
+                    <input className="w-full bg-zinc-800 border border-zinc-700 rounded-lg px-3 py-2 text-sm text-zinc-100 focus:outline-none focus:border-red-700"
+                      value={modelForm.name} onChange={e => setModelForm(f => ({ ...f, name: e.target.value }))} />
+                  </div>
+                  <div>
+                    <label className="text-[10px] uppercase font-semibold text-zinc-500 block mb-1">Größe</label>
+                    <select className="w-full bg-zinc-800 border border-zinc-700 rounded-lg px-2 py-2 text-sm text-zinc-100 focus:outline-none focus:border-red-700"
+                      value={modelForm.span} onChange={e => setModelForm(f => ({ ...f, span: parseInt(e.target.value) }))}>
+                      <option value={1}>Winzig/Klein/Mittel (1×1)</option>
+                      <option value={2}>Groß (2×2)</option>
+                      <option value={3}>Riesig (3×3)</option>
+                      <option value={4}>Gigantisch (4×4)</option>
+                      <option value={5}>Koloss (5×5)</option>
+                    </select>
+                  </div>
+                  <div>
+                    <label className="text-[10px] uppercase font-semibold text-zinc-500 block mb-2">Rotation</label>
+                    <div className="flex gap-2">
+                      {[0, 90, 180, 270].map(deg => (
+                        <button key={deg} onClick={() => setModelForm(f => ({ ...f, rotation: deg }))}
+                          className={`flex-1 py-1.5 rounded border text-xs font-semibold transition-colors ${modelForm.rotation === deg ? 'bg-red-900/40 border-red-700/60 text-red-200' : 'bg-zinc-800 border-zinc-700 text-zinc-400 hover:text-zinc-200'}`}>
+                          {deg}°
+                        </button>
+                      ))}
+                    </div>
+                  </div>
+                </div>
+              )}
+            </div>
+            {selectedModelImage && (
+              <div className="flex gap-2 px-5 py-4 border-t border-zinc-800 flex-shrink-0">
+                <button onClick={() => { setShowModelPicker(false); setSelectedModelImage(null) }}
+                  className="flex-1 py-2 rounded-lg bg-zinc-800 border border-zinc-700 text-sm text-zinc-400">Abbrechen</button>
+                <button
+                  disabled={!modelForm.name.trim()}
+                  onClick={() => {
+                    if (!modelForm.name.trim()) return
+                    setDeployingModelData({ image_url: selectedModelImage.url, name: modelForm.name, span: modelForm.span, rotation: modelForm.rotation })
+                    setShowModelPicker(false); setSelectedModelImage(null)
+                  }}
+                  className="flex-1 py-2 rounded-lg bg-red-900 hover:bg-red-800 border border-red-700/60 disabled:opacity-40 text-sm font-bold text-zinc-100">
+                  📍 Platzieren
+                </button>
+              </div>
+            )}
+          </div>
+        </div>
+      )}
+
+      {/* ── V20: Asset Picker Modal ── */}
+      {showAssetPicker && isGM && (
+        <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/80 backdrop-blur-sm p-4">
+          <div className="bg-zinc-950 border border-zinc-700/80 rounded-2xl w-full max-w-xl max-h-[85vh] flex flex-col shadow-2xl shadow-black/60">
+            <div className="flex items-center gap-2 px-5 py-4 border-b border-zinc-800 flex-shrink-0">
+              <span className="text-xl">✨</span>
+              <p className="flex-1 font-bold text-zinc-100">Asset / Effekt platzieren</p>
+              <button onClick={() => { setShowAssetPicker(false); setSelectedAssetImage(null) }} className="text-zinc-500 hover:text-zinc-300"><X className="w-5 h-5" /></button>
+            </div>
+            <div className="overflow-y-auto flex-1 p-4 space-y-3">
+              {!selectedAssetImage ? (
+                <>
+                  <input
+                    className="w-full bg-zinc-800 border border-zinc-700 rounded-lg px-3 py-2 text-sm text-zinc-100 placeholder-zinc-500 focus:outline-none focus:border-amber-700"
+                    placeholder="Suche…"
+                    value={assetSearch}
+                    onChange={e => setAssetSearch(e.target.value)}
+                  />
+                  {assetImages.length === 0 && (
+                    <p className="text-xs text-zinc-600 text-center py-4">Keine Asset-Bilder gefunden (public/tokens/assets/)</p>
+                  )}
+                  <div className="grid grid-cols-5 gap-2">
+                    {assetImages
+                      .filter(img => img.name.toLowerCase().includes(assetSearch.toLowerCase()))
+                      .map(img => (
+                        <button key={img.filename} onClick={() => { setSelectedAssetImage(img); setAssetForm(f => ({ ...f, name: img.name })) }}
+                          className="flex flex-col items-center gap-1 p-1 rounded-lg border border-zinc-700/60 hover:border-zinc-500 bg-zinc-900/60 hover:bg-zinc-800/60 transition-colors">
+                          {/* eslint-disable-next-line @next/next/no-img-element */}
+                          <img src={img.url} alt={img.name} className="w-14 h-14 object-contain rounded" />
+                          <span className="text-[9px] text-zinc-400 text-center leading-tight line-clamp-2">{img.name}</span>
+                        </button>
+                      ))
+                    }
+                  </div>
+                </>
+              ) : (
+                <div className="space-y-4">
+                  <div className="flex items-center gap-3">
+                    {/* eslint-disable-next-line @next/next/no-img-element */}
+                    <img src={selectedAssetImage.url} alt={selectedAssetImage.name} className="w-16 h-16 object-contain rounded border border-zinc-700" />
+                    <div className="flex-1">
+                      <p className="text-sm font-semibold text-zinc-200">{selectedAssetImage.name}</p>
+                      <button onClick={() => setSelectedAssetImage(null)} className="text-[11px] text-zinc-600 hover:text-zinc-400 underline">← Anderes Bild</button>
+                    </div>
+                  </div>
+                  <div>
+                    <label className="text-[10px] uppercase font-semibold text-zinc-500 block mb-1">Name</label>
+                    <input className="w-full bg-zinc-800 border border-zinc-700 rounded-lg px-3 py-2 text-sm text-zinc-100 focus:outline-none focus:border-amber-700"
+                      value={assetForm.name} onChange={e => setAssetForm(f => ({ ...f, name: e.target.value }))} />
+                  </div>
+                  <div className="grid grid-cols-2 gap-3">
+                    <div>
+                      <label className="text-[10px] uppercase font-semibold text-zinc-500 block mb-1">Breite (Felder)</label>
+                      <input type="number" min={1} max={20} className="w-full bg-zinc-800 border border-zinc-700 rounded-lg px-3 py-2 text-sm text-zinc-100 focus:outline-none focus:border-amber-700"
+                        value={assetForm.width_cells} onChange={e => setAssetForm(f => ({ ...f, width_cells: parseInt(e.target.value) || 1 }))} />
+                    </div>
+                    <div>
+                      <label className="text-[10px] uppercase font-semibold text-zinc-500 block mb-1">Höhe (Felder)</label>
+                      <input type="number" min={1} max={20} className="w-full bg-zinc-800 border border-zinc-700 rounded-lg px-3 py-2 text-sm text-zinc-100 focus:outline-none focus:border-amber-700"
+                        value={assetForm.height_cells} onChange={e => setAssetForm(f => ({ ...f, height_cells: parseInt(e.target.value) || 1 }))} />
+                    </div>
+                  </div>
+                  <div>
+                    <label className="text-[10px] uppercase font-semibold text-zinc-500 block mb-2">Rotation</label>
+                    <div className="flex gap-2">
+                      {[0, 90, 180, 270].map(deg => (
+                        <button key={deg} onClick={() => setAssetForm(f => ({ ...f, rotation: deg }))}
+                          className={`flex-1 py-1.5 rounded border text-xs font-semibold transition-colors ${assetForm.rotation === deg ? 'bg-amber-900/40 border-amber-700/60 text-amber-200' : 'bg-zinc-800 border-zinc-700 text-zinc-400 hover:text-zinc-200'}`}>
+                          {deg}°
+                        </button>
+                      ))}
+                    </div>
+                  </div>
+                </div>
+              )}
+            </div>
+            {selectedAssetImage && (
+              <div className="flex gap-2 px-5 py-4 border-t border-zinc-800 flex-shrink-0">
+                <button onClick={() => { setShowAssetPicker(false); setSelectedAssetImage(null) }}
+                  className="flex-1 py-2 rounded-lg bg-zinc-800 border border-zinc-700 text-sm text-zinc-400">Abbrechen</button>
+                <button
+                  disabled={!assetForm.name.trim()}
+                  onClick={() => {
+                    if (!assetForm.name.trim()) return
+                    setDeployingAssetData({ image_url: selectedAssetImage.url, name: assetForm.name, width_cells: assetForm.width_cells, height_cells: assetForm.height_cells, rotation: assetForm.rotation })
+                    setShowAssetPicker(false); setSelectedAssetImage(null)
+                  }}
+                  className="flex-1 py-2 rounded-lg bg-amber-900 hover:bg-amber-800 border border-amber-700/60 disabled:opacity-40 text-sm font-bold text-zinc-100">
+                  📍 Platzieren
+                </button>
+              </div>
+            )}
+          </div>
+        </div>
       )}
 
       {/* ── Main Content ── */}
@@ -2486,17 +2898,36 @@ export default function BattleMapPage() {
           /* ── Map View ── */
           <div className="flex-1 overflow-hidden flex">
 
-            {/* ── Staging Panel (all users, left side) ── */}
+            {/* ── Left Panel (Staging / Models / Assets tabs) ── */}
             {activeMap && (
               <div className={`flex-shrink-0 bg-zinc-950 border-r border-zinc-800/80 flex flex-col transition-all ${showStaging ? 'w-56' : 'w-8'}`}>
                 <button
                   onClick={() => setShowStaging(!showStaging)}
                   className="flex items-center justify-center p-2 text-zinc-600 hover:text-zinc-400 border-b border-zinc-800/60 flex-shrink-0"
-                  title={showStaging ? 'Staging ausblenden' : 'Staging einblenden'}>
+                  title={showStaging ? 'Panel ausblenden' : 'Panel einblenden'}>
                   {showStaging ? <ChevronLeft className="w-3.5 h-3.5" /> : <ChevronRightIcon className="w-3.5 h-3.5" />}
                 </button>
                 {showStaging && (
-                  <div className="flex-1 overflow-y-auto p-2 space-y-2">
+                  <>
+                    {/* Tab bar */}
+                    <div className="flex border-b border-zinc-800/60 flex-shrink-0">
+                      {([
+                        { id: 'staging', label: 'Bereit' },
+                        { id: 'models', label: 'Modelle' },
+                        { id: 'assets', label: 'Assets' },
+                      ] as const).map(tab => (
+                        <button key={tab.id} onClick={() => setSidebarTab(tab.id)}
+                          className={`flex-1 py-1.5 text-[10px] font-semibold transition-colors ${sidebarTab === tab.id ? 'bg-zinc-800 text-zinc-200' : 'text-zinc-600 hover:text-zinc-400'}`}>
+                          {tab.label}
+                        </button>
+                      ))}
+                    </div>
+
+                    <div className="flex-1 overflow-y-auto p-2 space-y-2">
+
+                    {/* ── Staging Tab ── */}
+                    {sidebarTab === 'staging' && (
+                      <>
                     <p className="text-[10px] uppercase font-semibold text-zinc-600 flex items-center gap-1 px-1">
                       <Layers className="w-3 h-3" /> Bereitstellung
                     </p>
@@ -2601,7 +3032,99 @@ export default function BattleMapPage() {
                         )}
                       </div>
                     )}
-                  </div>
+                      </>
+                    )}
+
+                    {/* ── Models Tab ── */}
+                    {sidebarTab === 'models' && isGM && (
+                      <>
+                        <button
+                          onClick={() => { loadModelImages(); setShowModelPicker(true) }}
+                          className="w-full py-1.5 rounded border border-red-800/50 bg-red-950/30 text-[10px] font-semibold text-red-300 hover:bg-red-950/50 transition-colors">
+                          🐉 Modell hinzufügen
+                        </button>
+                        {deployingModelData && (
+                          <div className="rounded-lg border border-emerald-600/50 bg-emerald-950/30 px-2 py-1.5 text-[10px] text-emerald-300 animate-pulse text-center">
+                            📍 Klicke auf ein Grid-Feld…<br />
+                            <button onClick={() => setDeployingModelData(null)} className="text-zinc-500 hover:text-zinc-300 underline mt-0.5">Abbrechen</button>
+                          </div>
+                        )}
+                        {placedModels.length === 0 && !deployingModelData && (
+                          <p className="text-[10px] text-zinc-700 italic px-1">Keine Modelle auf der Karte</p>
+                        )}
+                        {placedModels.map(m => (
+                          <div key={m.id}
+                            className={`rounded-lg border p-1.5 cursor-pointer transition-colors ${selectedModelId === m.id ? 'border-red-600/60 bg-red-950/20' : 'border-zinc-700/60 bg-zinc-900/60 hover:bg-zinc-800/60'}`}
+                            onClick={() => setSelectedModelId(m.id === selectedModelId ? null : m.id)}>
+                            <div className="flex items-center gap-1.5">
+                              {/* eslint-disable-next-line @next/next/no-img-element */}
+                              <img src={m.image_url} alt={m.name} className="w-8 h-8 object-contain rounded flex-shrink-0" />
+                              <div className="flex-1 min-w-0">
+                                <p className="text-[11px] font-semibold text-zinc-200 truncate">{m.name}</p>
+                                <p className="text-[9px] text-zinc-600">{m.span}×{m.span} · {m.rotation}° {m.is_hidden ? '· versteckt' : ''}</p>
+                              </div>
+                              <div className="flex flex-col gap-0.5">
+                                <button onClick={e => { e.stopPropagation(); toggleModelHidden(m) }}
+                                  className="p-0.5 text-zinc-600 hover:text-zinc-300">
+                                  {m.is_hidden ? <EyeOff className="w-3 h-3" /> : <Eye className="w-3 h-3" />}
+                                </button>
+                                <button onClick={e => { e.stopPropagation(); deleteModel(m.id) }}
+                                  className="p-0.5 text-zinc-600 hover:text-red-500">
+                                  <Trash2 className="w-3 h-3" />
+                                </button>
+                              </div>
+                            </div>
+                          </div>
+                        ))}
+                      </>
+                    )}
+                    {sidebarTab === 'models' && !isGM && (
+                      <p className="text-[10px] text-zinc-700 italic px-1">Nur für GM sichtbar</p>
+                    )}
+
+                    {/* ── Assets Tab ── */}
+                    {sidebarTab === 'assets' && isGM && (
+                      <>
+                        <button
+                          onClick={() => { loadAssetImages(); setShowAssetPicker(true) }}
+                          className="w-full py-1.5 rounded border border-amber-800/50 bg-amber-950/30 text-[10px] font-semibold text-amber-300 hover:bg-amber-950/50 transition-colors">
+                          ✨ Asset hinzufügen
+                        </button>
+                        {deployingAssetData && (
+                          <div className="rounded-lg border border-emerald-600/50 bg-emerald-950/30 px-2 py-1.5 text-[10px] text-emerald-300 animate-pulse text-center">
+                            📍 Klicke auf die Karte…<br />
+                            <button onClick={() => setDeployingAssetData(null)} className="text-zinc-500 hover:text-zinc-300 underline mt-0.5">Abbrechen</button>
+                          </div>
+                        )}
+                        {placedAssets.length === 0 && !deployingAssetData && (
+                          <p className="text-[10px] text-zinc-700 italic px-1">Keine Assets auf der Karte</p>
+                        )}
+                        {placedAssets.map(a => (
+                          <div key={a.id}
+                            className={`rounded-lg border p-1.5 cursor-pointer transition-colors ${selectedAssetId === a.id ? 'border-amber-600/60 bg-amber-950/20' : 'border-zinc-700/60 bg-zinc-900/60 hover:bg-zinc-800/60'}`}
+                            onClick={() => setSelectedAssetId(a.id === selectedAssetId ? null : a.id)}>
+                            <div className="flex items-center gap-1.5">
+                              {/* eslint-disable-next-line @next/next/no-img-element */}
+                              <img src={a.image_url} alt={a.name} className="w-8 h-8 object-contain rounded flex-shrink-0" />
+                              <div className="flex-1 min-w-0">
+                                <p className="text-[11px] font-semibold text-zinc-200 truncate">{a.name}</p>
+                                <p className="text-[9px] text-zinc-600">{a.width_cells}×{a.height_cells}F · {a.rotation}°</p>
+                              </div>
+                              <button onClick={e => { e.stopPropagation(); deleteAsset(a.id) }}
+                                className="p-0.5 text-zinc-600 hover:text-red-500">
+                                <Trash2 className="w-3 h-3" />
+                              </button>
+                            </div>
+                          </div>
+                        ))}
+                      </>
+                    )}
+                    {sidebarTab === 'assets' && !isGM && (
+                      <p className="text-[10px] text-zinc-700 italic px-1">Nur für GM sichtbar</p>
+                    )}
+
+                    </div>
+                  </>
                 )}
               </div>
             )}
@@ -2739,6 +3262,62 @@ export default function BattleMapPage() {
                     className="border-2 border-orange-600/70 bg-orange-500/20" />
                 )}
 
+                {/* ── V20: Placed Assets (below models & tokens) ── */}
+                {placedAssets.map(a => {
+                  const mapW = (activeMap?.grid_cols ?? 20) * cs
+                  const mapH = (activeMap?.grid_rows ?? 20) * cs
+                  const left = ox + (a.x_pct / 100) * mapW
+                  const top = oy + (a.y_pct / 100) * mapH
+                  const w = a.width_cells * cs
+                  const h = a.height_cells * cs
+                  return (
+                    <div key={a.id} style={{
+                      position: 'absolute',
+                      left: left - w / 2,
+                      top: top - h / 2,
+                      width: w,
+                      height: h,
+                      transform: `rotate(${a.rotation}deg)`,
+                      transformOrigin: 'center',
+                      zIndex: Math.max(1, Math.min(4, a.z_index)),
+                      cursor: isGM ? 'pointer' : 'default',
+                    }}
+                      onClick={e => { if (isGM) { e.stopPropagation(); setSelectedAssetId(a.id === selectedAssetId ? null : a.id) } }}>
+                      {/* eslint-disable-next-line @next/next/no-img-element */}
+                      <img src={a.image_url} alt={a.name}
+                        style={{ width: '100%', height: '100%', objectFit: 'contain', userSelect: 'none',
+                          outline: selectedAssetId === a.id ? '2px solid rgba(251,191,36,0.8)' : 'none' }}
+                        draggable={false} />
+                    </div>
+                  )
+                })}
+
+                {/* ── V20: Placed Models (above assets, below tokens) ── */}
+                {placedModels.filter(m => isGM || !m.is_hidden).map(m => {
+                  const spanPx = Math.max(1, Math.ceil(m.span)) * cs
+                  return (
+                    <div key={m.id} style={{
+                      position: 'absolute',
+                      left: ox + m.col * cs,
+                      top: oy + m.row * cs,
+                      width: spanPx,
+                      height: spanPx,
+                      transform: `rotate(${m.rotation}deg)`,
+                      transformOrigin: 'center',
+                      zIndex: m.is_hidden ? 0 : 5,
+                      cursor: isGM ? 'pointer' : 'default',
+                      opacity: m.is_hidden ? 0.35 : 1,
+                    }}
+                      onClick={e => { if (isGM) { e.stopPropagation(); setSelectedModelId(m.id === selectedModelId ? null : m.id) } }}>
+                      {/* eslint-disable-next-line @next/next/no-img-element */}
+                      <img src={m.image_url} alt={m.name}
+                        style={{ width: '100%', height: '100%', objectFit: 'contain', userSelect: 'none',
+                          outline: selectedModelId === m.id ? '2px solid rgba(239,68,68,0.8)' : 'none', outlineOffset: '-2px' }}
+                        draggable={false} />
+                    </div>
+                  )
+                })}
+
                 {/* Tokens (map only, not staged) */}
                 {mapTokens.map(t => {
                   const span = getSizeSpan(t.token_size || 'medium')
@@ -2848,6 +3427,26 @@ export default function BattleMapPage() {
                     </div>
                   </div>
                 )}
+                {/* V20: Deploy model banner */}
+                {deployingModelData && (
+                  <div className="absolute top-1/2 left-1/2 -translate-x-1/2 -translate-y-1/2 pointer-events-none z-30">
+                    <div className="bg-black/80 backdrop-blur-md border border-red-500/40 rounded-2xl px-6 py-4 text-center shadow-2xl">
+                      <p className="text-red-300 font-bold text-base">🐉 Klicke auf ein Grid-Feld</p>
+                      <p className="text-zinc-400 text-xs mt-1">um {deployingModelData.name} zu platzieren</p>
+                      <p className="text-zinc-600 text-[10px] mt-2">ESC zum Abbrechen</p>
+                    </div>
+                  </div>
+                )}
+                {/* V20: Deploy asset banner */}
+                {deployingAssetData && (
+                  <div className="absolute top-1/2 left-1/2 -translate-x-1/2 -translate-y-1/2 pointer-events-none z-30">
+                    <div className="bg-black/80 backdrop-blur-md border border-amber-500/40 rounded-2xl px-6 py-4 text-center shadow-2xl">
+                      <p className="text-amber-300 font-bold text-base">✨ Klicke auf die Karte</p>
+                      <p className="text-zinc-400 text-xs mt-1">um {deployingAssetData.name} zu platzieren</p>
+                      <p className="text-zinc-600 text-[10px] mt-2">ESC zum Abbrechen</p>
+                    </div>
+                  </div>
+                )}
               </div>
 
               {/* ── V19: Dice Wall – redesigned glassmorphism overlay ── */}
@@ -2863,9 +3462,11 @@ export default function BattleMapPage() {
                   {showDiceWall && (
                     <div className="bg-black/55 backdrop-blur-xl border border-white/10 rounded-2xl shadow-2xl shadow-black/60 overflow-hidden min-w-[200px] max-w-[240px]">
                       {filteredDiceWall.slice(0, 6).map((r, i) => {
+                        // Krit/Patzer NUR bei echtem d20-Einzelwurf (nicht bei Schadenswürfeln)
+                        const isSingleD20 = r.dice_config?.length === 1 && r.dice_config[0].type === 'd20' && r.dice_config[0].count === 1
                         const allRolls = r.results?.flat() ?? []
-                        const hasNat20 = allRolls.includes(20)
-                        const hasNat1 = allRolls.includes(1) && !hasNat20
+                        const hasNat20 = isSingleD20 && allRolls.includes(20)
+                        const hasNat1  = isSingleD20 && allRolls.includes(1) && !hasNat20
                         const diceLabel = r.dice_config?.map(d => `${d.count}${d.type}`).join('+') ?? ''
                         return (
                           <div key={r.id}

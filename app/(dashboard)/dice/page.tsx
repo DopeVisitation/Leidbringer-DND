@@ -122,12 +122,13 @@ function RollResultToast({ data, onDismiss }: { data: RollToastData; onDismiss: 
     return () => clearTimeout(t)
   }, [data, onDismiss])
 
-  // Detect crit/fumble: any d20 result
-  const d20Results = data.config.flatMap((c, i) =>
-    c.type === 'd20' ? (data.results[i] ?? []) : []
-  )
-  const isCrit   = d20Results.includes(20)
-  const isFumble = d20Results.length > 0 && d20Results.every(v => v === 1)
+  // Krit/Patzer NUR bei echtem d20-Einzelwurf (nicht bei Schadenswürfeln)
+  const isSingleD20Roll = data.config.length === 1 && data.config[0].type === 'd20' && data.config[0].count === 1
+  const d20Results = isSingleD20Roll
+    ? (data.results[0] ?? [])
+    : []
+  const isCrit   = isSingleD20Roll && d20Results.includes(20)
+  const isFumble = isSingleD20Roll && d20Results.includes(1) && !isCrit
 
   return (
     <div
@@ -279,12 +280,11 @@ function HistoryTab({ currentUserRole }: { currentUserRole: string }) {
             <p className="text-center text-zinc-600 text-sm py-8">Keine Würfe</p>
           ) : (
             filtered.map((roll) => {
-              // Detect crit/fumble
-              const d20Results = roll.dice_config.flatMap((c, i) =>
-                c.type === 'd20' ? ((roll.results as number[][])[i] ?? []) : []
-              )
-              const isCrit   = d20Results.includes(20)
-              const isFumble = d20Results.length > 0 && d20Results.every(v => v === 1)
+              // Krit/Patzer NUR bei echtem d20-Einzelwurf
+              const rollIsD20 = roll.dice_config.length === 1 && roll.dice_config[0].type === 'd20' && roll.dice_config[0].count === 1
+              const d20Results = rollIsD20 ? ((roll.results as number[][])[0] ?? []) : []
+              const isCrit   = rollIsD20 && d20Results.includes(20)
+              const isFumble = rollIsD20 && d20Results.includes(1) && !isCrit
 
               return (
                 <div

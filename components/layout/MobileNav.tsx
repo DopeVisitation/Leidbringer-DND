@@ -3,7 +3,7 @@
 import { useEffect, useState } from 'react'
 import Link from 'next/link'
 import { usePathname } from 'next/navigation'
-import { CalendarDays, Shield, Dices, MessageSquare, Swords, Bell, Users, GitBranch } from 'lucide-react'
+import { CalendarDays, Shield, Dices, MessageSquare, Swords, Bell, Users, GitBranch, ClipboardList, PawPrint } from 'lucide-react'
 import { cn } from '@/lib/utils'
 import { createClient } from '@/lib/supabase/client'
 import { useAuth } from '@/lib/hooks/useAuth'
@@ -17,6 +17,8 @@ const navItems = [
   { href: '/chat',       label: 'Chat',     icon: MessageSquare },
   { href: '/battlemap',  label: 'Kampf',    icon: Swords        },
   { href: '/approvals',  label: 'Anträge',  icon: Bell          },
+  { href: '/log',        label: 'Log',      icon: ClipboardList },
+  { href: '/extras',     label: 'Extras',   icon: PawPrint      },
 ]
 
 export function MobileNav() {
