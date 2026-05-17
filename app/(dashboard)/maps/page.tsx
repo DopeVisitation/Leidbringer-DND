@@ -1,23 +1,12 @@
 'use client'
 
 import { useState, useEffect, useRef, useCallback, useMemo } from 'react'
-import { MapPin, Plus, Trash2, X, ZoomIn, ZoomOut, Search, Compass } from 'lucide-react'
+import { MapPin, Plus, Trash2, X, ZoomIn, ZoomOut, Search, Compass, Eye, EyeOff, Globe } from 'lucide-react'
 import { createClient } from '@/lib/supabase/client'
 import { useAuth } from '@/lib/hooks/useAuth'
 
-// ── Sword Coast Map ──────────────────────────────────────────────────────────
-const MAP = {
-  id: 2,                          // bleibt aus historischen Gründen 2 (siehe schema_v4)
-  name: 'Sword Coast',
-  url: '/sword-coast.jpg',
-  w: 10200, h: 6600,
-  initScale: 0.14,
-}
-
-// Eingebaute Orte — leer: alle Orte werden manuell über „Ort hinzufügen" eingepflegt
-// Orte die gesucht werden sollen bitte über die Suche → "Ort hinzufügen" in die DB eintragen
-const BUILTIN_LOCATIONS: { name: string; x: number; y: number }[] = [
-]
+// ── Fallback hardcoded Sword Coast (shown before DB loads) ────────────────────
+const SWORD_COAST_ID = '00000000-0000-0000-0000-000000000002'
 
 const MARKER_COLORS = [
   { val: '#f59e0b', label: 'Amber'  },
@@ -31,6 +20,19 @@ const MARKER_COLORS = [
 ]
 
 const MARKER_ICONS = ['📍','⚔️','🏰','🐉','💀','⭐','🌊','🌲','⛰️','🔥','❓','✅','🏕️','⚓','🌿','💎','🗝️','🪄','🧿','🎯']
+
+interface WorldMap {
+  id: string
+  name: string
+  url: string
+  width: number
+  height: number
+  init_scale: number
+  is_visible: boolean
+  sort_order: number
+  created_by: string | null
+  created_at: string
+}
 
 interface MapMarker {
   id: string
@@ -73,7 +75,17 @@ export default function MapsPage() {
   const dragStartRef = useRef({ mx: 0, my: 0, ox: 0, oy: 0 })
   const didDragRef = useRef(false)
 
-  const [scale, setScale] = useState(MAP.initScale)
+  // ── World maps state ──────────────────────────────────────────────────────
+  const [worldMaps, setWorldMaps] = useState<WorldMap[]>([])
+  const [activeMapId, setActiveMapId] = useState<string>(SWORD_COAST_ID)
+  const [showMapManager, setShowMapManager] = useState(false)
+  const [newMapForm, setNewMapForm] = useState({ name: '', url: '', width: '10200', height: '6600', init_scale: '0.14' })
+  const [savingMap, setSavingMap] = useState(false)
+
+  const activeWorldMap = worldMaps.find(m => m.id === activeMapId) ?? null
+
+  // ── Map view state ────────────────────────────────────────────────────────
+  const [scale, setScale] = useState(0.14)
   const [offset, setOffset] = useState({ x: 20, y: 20 })
   const [search, setSearch] = useState('')
   const [searchResults, setSearchResults] = useState<SearchHit[]>([])
@@ -89,20 +101,56 @@ export default function MapsPage() {
   const [newLocationName, setNewLocationName] = useState('')
   const [saving, setSaving] = useState(false)
 
-  // ── Daten laden ───────────────────────────────────────────────────────────
+  // ── Load world maps ───────────────────────────────────────────────────────
+  const loadWorldMaps = useCallback(async () => {
+    const { data } = await supabase.from('world_maps').select('*').order('sort_order', { ascending: true })
+    if (data && data.length > 0) {
+      setWorldMaps(data as WorldMap[])
+      // Set to Sword Coast by default if available
+      if (!activeMapId || !data.find((m: WorldMap) => m.id === activeMapId)) {
+        setActiveMapId(data[0].id)
+      }
+    }
+  }, [supabase]) // eslint-disable-line react-hooks/exhaustive-deps
+
+  useEffect(() => {
+    loadWorldMaps()
+    const ch = supabase.channel('world_maps_v13')
+      .on('postgres_changes', { event: '*', schema: 'public', table: 'world_maps' }, loadWorldMaps)
+      .subscribe()
+    return () => { supabase.removeChannel(ch) }
+  }, [loadWorldMaps, supabase])
+
+  // Reset scale/offset when switching maps
+  useEffect(() => {
+    if (activeWorldMap) {
+      setScale(activeWorldMap.init_scale)
+      setOffset({ x: 20, y: 20 })
+      setSearchPin(null)
+      setSelectedMarker(null)
+      setSelectedCustom(null)
+      setPendingPos(null)
+      setAddMode('none')
+    }
+  }, [activeMapId]) // eslint-disable-line react-hooks/exhaustive-deps
+
+  // ── Load markers / custom locations ─────────────────────────────────────
   const loadMarkers = useCallback(async () => {
     const { data } = await supabase
       .from('map_markers')
       .select('*, creator:profiles!map_markers_created_by_fkey(username)')
       .order('created_at', { ascending: false })
-    if (data) setMarkers((data as MapMarker[]).filter((m) => (m.map_id ?? 0) === MAP.id))
+    if (data) {
+      // Legacy: Sword Coast uses map_id=2; new maps don't have markers yet
+      setMarkers((data as MapMarker[]).filter((m) => (m.map_id ?? 0) === 2))
+    }
   }, [supabase])
 
   const loadCustomLocations = useCallback(async () => {
     const { data } = await supabase
       .from('custom_locations')
       .select('*, creator:profiles(username)')
-      .eq('map_id', MAP.id)
+      .eq('map_id', 2)
       .order('created_at', { ascending: false })
     if (data) setCustomLocations(data as CustomLocation[])
   }, [supabase])
@@ -110,10 +158,10 @@ export default function MapsPage() {
   useEffect(() => {
     loadMarkers()
     loadCustomLocations()
-    const chMarkers = supabase.channel('map_markers_v9')
+    const chMarkers = supabase.channel('map_markers_v13')
       .on('postgres_changes', { event: '*', schema: 'public', table: 'map_markers' }, loadMarkers)
       .subscribe()
-    const chCustom = supabase.channel('custom_locations_v9')
+    const chCustom = supabase.channel('custom_locations_v13')
       .on('postgres_changes', { event: '*', schema: 'public', table: 'custom_locations' }, loadCustomLocations)
       .subscribe()
     return () => {
@@ -121,6 +169,42 @@ export default function MapsPage() {
       supabase.removeChannel(chCustom)
     }
   }, [loadMarkers, loadCustomLocations, supabase])
+
+  // ── GM: add map ───────────────────────────────────────────────────────────
+  const addWorldMap = async () => {
+    if (!newMapForm.name.trim() || !newMapForm.url.trim() || !user) return
+    setSavingMap(true)
+    const { data } = await supabase.from('world_maps').insert({
+      name: newMapForm.name.trim(),
+      url: newMapForm.url.trim(),
+      width: parseInt(newMapForm.width) || 10200,
+      height: parseInt(newMapForm.height) || 6600,
+      init_scale: parseFloat(newMapForm.init_scale) || 0.14,
+      is_visible: true,
+      sort_order: worldMaps.length,
+      created_by: user.id,
+    }).select().single()
+    if (data) {
+      setActiveMapId((data as WorldMap).id)
+    }
+    setNewMapForm({ name: '', url: '', width: '10200', height: '6600', init_scale: '0.14' })
+    setSavingMap(false)
+    loadWorldMaps()
+  }
+
+  const toggleMapVisibility = async (mapId: string, isVisible: boolean) => {
+    await supabase.from('world_maps').update({ is_visible: !isVisible }).eq('id', mapId)
+    setWorldMaps(prev => prev.map(m => m.id === mapId ? { ...m, is_visible: !isVisible } : m))
+  }
+
+  const deleteWorldMap = async (mapId: string) => {
+    if (!confirm('Karte löschen? Alle Markierungen bleiben erhalten.')) return
+    await supabase.from('world_maps').delete().eq('id', mapId)
+    if (activeMapId === mapId && worldMaps.length > 1) {
+      setActiveMapId(worldMaps.find(m => m.id !== mapId)?.id ?? SWORD_COAST_ID)
+    }
+    loadWorldMaps()
+  }
 
   // ── Wheel = Zoom ──────────────────────────────────────────────────────────
   useEffect(() => {
@@ -152,14 +236,14 @@ export default function MapsPage() {
   const onMouseUp = () => { isDraggingRef.current = false }
 
   const onMapClick = (e: React.MouseEvent) => {
-    if (addMode === 'none' || !containerRef.current) return
+    if (addMode === 'none' || !containerRef.current || !activeWorldMap) return
     const rect = containerRef.current.getBoundingClientRect()
     const px = (e.clientX - rect.left - offset.x) / scale
     const py = (e.clientY - rect.top - offset.y) / scale
-    setPendingPos({ x: (px / MAP.w) * 100, y: (py / MAP.h) * 100 })
+    setPendingPos({ x: (px / activeWorldMap.width) * 100, y: (py / activeWorldMap.height) * 100 })
   }
 
-  // ── Saving ────────────────────────────────────────────────────────────────
+  // ── Saving markers / locations ─────────────────────────────────────────────
   const saveMarker = async () => {
     if (!pendingPos || !user || !newMarker.title.trim()) return
     setSaving(true)
@@ -169,7 +253,7 @@ export default function MapsPage() {
       x: pendingPos.x, y: pendingPos.y,
       color: newMarker.color, icon: newMarker.icon,
       created_by: user.id,
-      map_id: MAP.id,
+      map_id: 2, // legacy integer map_id for Sword Coast
     })
     setPendingPos(null)
     setAddMode('none')
@@ -181,7 +265,7 @@ export default function MapsPage() {
     if (!pendingPos || !user || !newLocationName.trim()) return
     setSaving(true)
     await supabase.from('custom_locations').insert({
-      map_id: MAP.id,
+      map_id: 2,
       name: newLocationName.trim(),
       x: pendingPos.x, y: pendingPos.y,
       created_by: user.id,
@@ -204,9 +288,8 @@ export default function MapsPage() {
     setSelectedCustom(null)
   }
 
-  // ── Search (kombiniert built-in + custom_locations + markers) ─────────────
+  // ── Search ────────────────────────────────────────────────────────────────
   const allSearchable: SearchHit[] = useMemo(() => [
-    ...BUILTIN_LOCATIONS.map((l) => ({ name: l.name, x: l.x, y: l.y, source: 'builtin' as const })),
     ...customLocations.map((l) => ({ name: l.name, x: l.x, y: l.y, source: 'custom' as const, id: l.id, createdBy: l.created_by })),
   ], [customLocations])
 
@@ -232,72 +315,179 @@ export default function MapsPage() {
   }
 
   const panTo = (hit: SearchHit) => {
-    if (!containerRef.current) return
+    if (!containerRef.current || !activeWorldMap) return
     const rect = containerRef.current.getBoundingClientRect()
     setOffset({
-      x: rect.width  / 2 - (hit.x / 100) * MAP.w * scale,
-      y: rect.height / 2 - (hit.y / 100) * MAP.h * scale,
+      x: rect.width  / 2 - (hit.x / 100) * activeWorldMap.width * scale,
+      y: rect.height / 2 - (hit.y / 100) * activeWorldMap.height * scale,
     })
     setSearch('')
     setSearchResults([])
     setSearchPin({ x: hit.x, y: hit.y, name: hit.name })
-    // Eigene Orte: Popup öffnen damit man sie löschen kann
     if (hit.source === 'custom' && hit.id) {
       const found = customLocations.find((l) => l.id === hit.id)
       if (found) setSelectedCustom(found)
     }
   }
 
-  const toScreen = (xPct: number, yPct: number) => ({
-    x: (xPct / 100) * MAP.w * scale + offset.x,
-    y: (yPct / 100) * MAP.h * scale + offset.y,
-  })
+  const toScreen = (xPct: number, yPct: number) => {
+    if (!activeWorldMap) return { x: 0, y: 0 }
+    return {
+      x: (xPct / 100) * activeWorldMap.width * scale + offset.x,
+      y: (yPct / 100) * activeWorldMap.height * scale + offset.y,
+    }
+  }
+
+  // Only show markers for the Sword Coast map
+  const showMarkers = activeMapId === SWORD_COAST_ID
 
   if (!user) return null
 
   return (
     <div className="flex flex-col h-[calc(100vh-4rem)] md:h-screen overflow-hidden">
 
-      {/* Header — kein Tab mehr, nur Titel */}
+      {/* Header */}
       <div className="flex items-center gap-2 px-4 py-2 bg-zinc-950 border-b border-zinc-800 flex-shrink-0">
         <Compass className="w-4 h-4 text-amber-400" />
-        <h1 className="text-sm font-bold text-amber-300">{MAP.name}</h1>
+        <h1 className="text-sm font-bold text-amber-300">{activeWorldMap?.name ?? 'Karte'}</h1>
         <span className="text-xs text-zinc-500 ml-1">— Forgotten Realms</span>
+
+        {/* Map switcher tabs */}
+        <div className="flex items-center gap-1 ml-4 flex-1 overflow-x-auto">
+          {worldMaps.map(m => (
+            <button key={m.id}
+              onClick={() => setActiveMapId(m.id)}
+              className={`flex items-center gap-1 px-3 py-1 rounded-full text-xs font-medium whitespace-nowrap transition-colors ${
+                activeMapId === m.id
+                  ? 'bg-amber-700/40 border border-amber-600/50 text-amber-300'
+                  : 'bg-zinc-800/60 border border-zinc-700/40 text-zinc-400 hover:text-zinc-200'
+              } ${!m.is_visible && isGM ? 'opacity-50' : ''}`}>
+              {!m.is_visible && <EyeOff className="w-3 h-3" />}
+              {m.name}
+            </button>
+          ))}
+        </div>
+
+        {/* GM: map manager button */}
+        {isGM && (
+          <button
+            onClick={() => setShowMapManager(!showMapManager)}
+            className={`flex items-center gap-1.5 px-3 py-1 rounded-lg text-xs transition-colors ml-auto flex-shrink-0 ${
+              showMapManager ? 'bg-sky-700/30 border border-sky-600/40 text-sky-300' : 'bg-zinc-800 border border-zinc-700 text-zinc-400 hover:text-zinc-200'
+            }`}>
+            <Globe className="w-3.5 h-3.5" />
+            Karten verwalten
+          </button>
+        )}
       </div>
+
+      {/* GM: Map Manager Panel */}
+      {isGM && showMapManager && (
+        <div className="bg-zinc-900 border-b border-zinc-800 px-4 py-3 flex-shrink-0">
+          <div className="flex gap-4 flex-wrap">
+            {/* Existing maps list */}
+            <div className="flex-1 min-w-48">
+              <p className="text-[10px] uppercase font-semibold text-zinc-500 mb-2">Karten</p>
+              <div className="space-y-1.5">
+                {worldMaps.map(m => (
+                  <div key={m.id} className="flex items-center gap-2 bg-zinc-800/60 rounded-lg px-3 py-2">
+                    <div className={`w-2 h-2 rounded-full flex-shrink-0 ${m.is_visible ? 'bg-emerald-500' : 'bg-zinc-600'}`} />
+                    <span className="flex-1 text-xs text-zinc-200 truncate">{m.name}</span>
+                    <span className="text-[10px] text-zinc-600 truncate max-w-32">{m.url.slice(0, 30)}{m.url.length > 30 ? '…' : ''}</span>
+                    <button
+                      onClick={() => toggleMapVisibility(m.id, m.is_visible)}
+                      title={m.is_visible ? 'Für Spieler ausblenden' : 'Für Spieler anzeigen'}
+                      className={`p-1 rounded transition-colors ${m.is_visible ? 'text-emerald-400 hover:text-emerald-300' : 'text-zinc-600 hover:text-zinc-400'}`}>
+                      {m.is_visible ? <Eye className="w-3.5 h-3.5" /> : <EyeOff className="w-3.5 h-3.5" />}
+                    </button>
+                    {m.id !== SWORD_COAST_ID && (
+                      <button
+                        onClick={() => deleteWorldMap(m.id)}
+                        className="p-1 text-zinc-700 hover:text-red-500 rounded transition-colors">
+                        <Trash2 className="w-3.5 h-3.5" />
+                      </button>
+                    )}
+                  </div>
+                ))}
+              </div>
+            </div>
+
+            {/* Add new map form */}
+            <div className="flex-1 min-w-64 border-l border-zinc-800 pl-4">
+              <p className="text-[10px] uppercase font-semibold text-zinc-500 mb-2">Neue Karte hinzufügen</p>
+              <div className="space-y-2">
+                <div className="grid grid-cols-2 gap-2">
+                  <input
+                    className="bg-zinc-800 border border-zinc-700 rounded-lg px-2 py-1.5 text-xs text-zinc-100 placeholder-zinc-600 focus:outline-none focus:border-amber-500"
+                    placeholder="Name *" value={newMapForm.name}
+                    onChange={e => setNewMapForm(f => ({ ...f, name: e.target.value }))} />
+                  <input
+                    className="bg-zinc-800 border border-zinc-700 rounded-lg px-2 py-1.5 text-xs text-zinc-100 placeholder-zinc-600 focus:outline-none focus:border-amber-500"
+                    placeholder="Init. Zoom (z.B. 0.14)" value={newMapForm.init_scale}
+                    onChange={e => setNewMapForm(f => ({ ...f, init_scale: e.target.value }))} />
+                </div>
+                <input
+                  className="w-full bg-zinc-800 border border-zinc-700 rounded-lg px-2 py-1.5 text-xs text-zinc-100 placeholder-zinc-600 focus:outline-none focus:border-amber-500"
+                  placeholder="Bild-URL * (z.B. /meine-karte.jpg oder https://…)" value={newMapForm.url}
+                  onChange={e => setNewMapForm(f => ({ ...f, url: e.target.value }))} />
+                <div className="grid grid-cols-2 gap-2">
+                  <input
+                    className="bg-zinc-800 border border-zinc-700 rounded-lg px-2 py-1.5 text-xs text-zinc-100 placeholder-zinc-600 focus:outline-none focus:border-amber-500"
+                    placeholder="Breite px (10200)" value={newMapForm.width}
+                    onChange={e => setNewMapForm(f => ({ ...f, width: e.target.value }))} />
+                  <input
+                    className="bg-zinc-800 border border-zinc-700 rounded-lg px-2 py-1.5 text-xs text-zinc-100 placeholder-zinc-600 focus:outline-none focus:border-amber-500"
+                    placeholder="Höhe px (6600)" value={newMapForm.height}
+                    onChange={e => setNewMapForm(f => ({ ...f, height: e.target.value }))} />
+                </div>
+                <button
+                  onClick={addWorldMap}
+                  disabled={savingMap || !newMapForm.name.trim() || !newMapForm.url.trim()}
+                  className="flex items-center gap-1.5 px-4 py-1.5 rounded-lg bg-sky-700 hover:bg-sky-600 disabled:opacity-50 text-xs font-bold text-white transition-colors">
+                  <Plus className="w-3.5 h-3.5" />
+                  {savingMap ? 'Speichern…' : 'Karte hinzufügen'}
+                </button>
+              </div>
+            </div>
+          </div>
+        </div>
+      )}
 
       {/* Toolbar */}
       <div className="flex items-center gap-2 px-4 py-2.5 bg-zinc-900 border-b border-zinc-800 flex-shrink-0 flex-wrap">
         <span className="text-xs text-zinc-500">
-          {markers.length} Markierungen · {customLocations.length} eigene Orte
+          {showMarkers ? `${markers.length} Markierungen · ${customLocations.length} eigene Orte` : activeWorldMap?.name ?? ''}
         </span>
 
-        {/* Suche */}
-        <div className="relative flex-1 min-w-[200px] max-w-md">
-          <Search className="absolute left-2.5 top-1/2 -translate-y-1/2 w-3.5 h-3.5 text-zinc-500" />
-          <input
-            type="text"
-            value={search}
-            onChange={(e) => handleSearch(e.target.value)}
-            placeholder="Ort auf der Karte suchen…"
-            className="w-full bg-zinc-800 border border-zinc-700 rounded-lg pl-8 pr-3 py-1.5 text-xs text-zinc-100 placeholder-zinc-500 focus:outline-none focus:border-amber-500"
-          />
-          {searchResults.length > 0 && (
-            <div className="absolute top-full mt-1 left-0 right-0 bg-zinc-900 border border-zinc-700 rounded-lg overflow-hidden z-20 shadow-xl max-h-80 overflow-y-auto">
-              {searchResults.map((loc, i) => (
-                <button
-                  key={`${loc.source}-${loc.id ?? loc.name}-${i}`}
-                  onClick={() => panTo(loc)}
-                  className="w-full text-left px-3 py-2 text-xs text-zinc-200 hover:bg-zinc-800 transition-colors flex items-center justify-between gap-2"
-                >
-                  <span>📍 {loc.name}</span>
-                  {loc.source === 'custom' && (
-                    <span className="text-[10px] text-amber-400 bg-amber-500/10 px-1.5 py-0.5 rounded">eigener Ort</span>
-                  )}
-                </button>
-              ))}
-            </div>
-          )}
-        </div>
+        {/* Suche – only for Sword Coast (has custom locations) */}
+        {showMarkers && (
+          <div className="relative flex-1 min-w-[200px] max-w-md">
+            <Search className="absolute left-2.5 top-1/2 -translate-y-1/2 w-3.5 h-3.5 text-zinc-500" />
+            <input
+              type="text"
+              value={search}
+              onChange={(e) => handleSearch(e.target.value)}
+              placeholder="Ort auf der Karte suchen…"
+              className="w-full bg-zinc-800 border border-zinc-700 rounded-lg pl-8 pr-3 py-1.5 text-xs text-zinc-100 placeholder-zinc-500 focus:outline-none focus:border-amber-500"
+            />
+            {searchResults.length > 0 && (
+              <div className="absolute top-full mt-1 left-0 right-0 bg-zinc-900 border border-zinc-700 rounded-lg overflow-hidden z-20 shadow-xl max-h-80 overflow-y-auto">
+                {searchResults.map((loc, i) => (
+                  <button
+                    key={`${loc.source}-${loc.id ?? loc.name}-${i}`}
+                    onClick={() => panTo(loc)}
+                    className="w-full text-left px-3 py-2 text-xs text-zinc-200 hover:bg-zinc-800 transition-colors flex items-center justify-between gap-2"
+                  >
+                    <span>📍 {loc.name}</span>
+                    {loc.source === 'custom' && (
+                      <span className="text-[10px] text-amber-400 bg-amber-500/10 px-1.5 py-0.5 rounded">eigener Ort</span>
+                    )}
+                  </button>
+                ))}
+              </div>
+            )}
+          </div>
+        )}
 
         {/* Such-Pin abbrechen */}
         {searchPin && (
@@ -327,29 +517,33 @@ export default function MapsPage() {
           </button>
           <span className="text-xs text-zinc-600 px-1">{Math.round(scale * 100)}%</span>
 
-          {/* Modus-Buttons */}
-          <button
-            onClick={() => {
-              if (addMode === 'location') { setAddMode('none'); setPendingPos(null) }
-              else { setAddMode('location'); setPendingPos(null); setSelectedMarker(null); setSelectedCustom(null) }
-            }}
-            className={`flex items-center gap-1.5 px-3 py-1.5 rounded-lg text-xs font-medium transition-colors ml-1 ${
-              addMode === 'location' ? 'bg-emerald-600 text-white' : 'bg-zinc-800 text-zinc-300 hover:bg-zinc-700'
-            }`}
-          >
-            {addMode === 'location' ? <><X className="w-3.5 h-3.5" /> Abbrechen</> : <><MapPin className="w-3.5 h-3.5" /> Ort hinzufügen</>}
-          </button>
-          <button
-            onClick={() => {
-              if (addMode === 'marker') { setAddMode('none'); setPendingPos(null) }
-              else { setAddMode('marker'); setPendingPos(null); setSelectedMarker(null); setSelectedCustom(null) }
-            }}
-            className={`flex items-center gap-1.5 px-3 py-1.5 rounded-lg text-xs font-medium transition-colors ${
-              addMode === 'marker' ? 'bg-amber-600 text-white' : 'bg-zinc-800 text-zinc-300 hover:bg-zinc-700'
-            }`}
-          >
-            {addMode === 'marker' ? <><X className="w-3.5 h-3.5" /> Abbrechen</> : <><Plus className="w-3.5 h-3.5" /> Markierung</>}
-          </button>
+          {/* Add location/marker buttons — only for Sword Coast */}
+          {showMarkers && (
+            <>
+              <button
+                onClick={() => {
+                  if (addMode === 'location') { setAddMode('none'); setPendingPos(null) }
+                  else { setAddMode('location'); setPendingPos(null); setSelectedMarker(null); setSelectedCustom(null) }
+                }}
+                className={`flex items-center gap-1.5 px-3 py-1.5 rounded-lg text-xs font-medium transition-colors ml-1 ${
+                  addMode === 'location' ? 'bg-emerald-600 text-white' : 'bg-zinc-800 text-zinc-300 hover:bg-zinc-700'
+                }`}
+              >
+                {addMode === 'location' ? <><X className="w-3.5 h-3.5" /> Abbrechen</> : <><MapPin className="w-3.5 h-3.5" /> Ort hinzufügen</>}
+              </button>
+              <button
+                onClick={() => {
+                  if (addMode === 'marker') { setAddMode('none'); setPendingPos(null) }
+                  else { setAddMode('marker'); setPendingPos(null); setSelectedMarker(null); setSelectedCustom(null) }
+                }}
+                className={`flex items-center gap-1.5 px-3 py-1.5 rounded-lg text-xs font-medium transition-colors ${
+                  addMode === 'marker' ? 'bg-amber-600 text-white' : 'bg-zinc-800 text-zinc-300 hover:bg-zinc-700'
+                }`}
+              >
+                {addMode === 'marker' ? <><X className="w-3.5 h-3.5" /> Abbrechen</> : <><Plus className="w-3.5 h-3.5" /> Markierung</>}
+              </button>
+            </>
+          )}
         </div>
       </div>
 
@@ -375,30 +569,35 @@ export default function MapsPage() {
         onMouseLeave={onMouseUp}
         onClick={onMapClick}
       >
-        {/* Map Image */}
-        <div
-          style={{
-            position: 'absolute',
-            transform: `translate(${offset.x}px, ${offset.y}px) scale(${scale})`,
-            transformOrigin: '0 0',
-            width: MAP.w,
-            height: MAP.h,
-          }}
-        >
-          {/* eslint-disable-next-line @next/next/no-img-element */}
-          <img
-            src={MAP.url}
-            alt={MAP.name}
-            width={MAP.w}
-            height={MAP.h}
-            draggable={false}
-            className="block select-none"
-            style={{ width: MAP.w, height: MAP.h }}
-          />
-        </div>
+        {activeWorldMap ? (
+          <div
+            style={{
+              position: 'absolute',
+              transform: `translate(${offset.x}px, ${offset.y}px) scale(${scale})`,
+              transformOrigin: '0 0',
+              width: activeWorldMap.width,
+              height: activeWorldMap.height,
+            }}
+          >
+            {/* eslint-disable-next-line @next/next/no-img-element */}
+            <img
+              src={activeWorldMap.url}
+              alt={activeWorldMap.name}
+              width={activeWorldMap.width}
+              height={activeWorldMap.height}
+              draggable={false}
+              className="block select-none"
+              style={{ width: activeWorldMap.width, height: activeWorldMap.height }}
+            />
+          </div>
+        ) : (
+          <div className="flex items-center justify-center h-full text-zinc-600 text-sm">
+            Keine Karte ausgewählt
+          </div>
+        )}
 
-        {/* Existing Markers */}
-        {markers.map((m) => {
+        {/* Markers — only for Sword Coast */}
+        {showMarkers && markers.map((m) => {
           const pos = toScreen(m.x, m.y)
           return (
             <button
@@ -422,9 +621,7 @@ export default function MapsPage() {
           )
         })}
 
-        {/* Custom Locations — keine persistenten Pins; nur via Suche sichtbar */}
-
-        {/* Search Pin — Punkt sitzt EXAKT auf der Ortsposition */}
+        {/* Search Pin */}
         {searchPin && (() => {
           const pos = toScreen(searchPin.x, searchPin.y)
           return (
@@ -432,13 +629,10 @@ export default function MapsPage() {
               style={{ left: pos.x, top: pos.y, transform: 'translate(-50%, -50%)' }}
               className="absolute z-30 pointer-events-none"
             >
-              {/* Pulsierender Außenring */}
               <div className="absolute inset-0 flex items-center justify-center">
                 <span className="absolute w-10 h-10 rounded-full bg-amber-400/30 animate-ping" />
               </div>
-              {/* Innerer Punkt */}
               <div className="relative w-4 h-4 rounded-full bg-amber-400 border-2 border-white shadow-[0_0_12px_rgba(245,158,11,0.95)]" />
-              {/* Name darüber */}
               <div className="absolute -top-7 left-1/2 -translate-x-1/2">
                 <span className="bg-amber-500 text-zinc-900 text-xs px-2 py-0.5 rounded-full font-bold shadow-lg whitespace-nowrap">
                   {searchPin.name}

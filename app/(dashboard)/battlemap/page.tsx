@@ -12,6 +12,7 @@ import {
 import { createClient } from '@/lib/supabase/client'
 import { useAuth } from '@/lib/hooks/useAuth'
 import type { CharacterFullData } from '@/types'
+import { DARK_FANTASY_ICONS, getTokenIcon, isIconId, getIconsByCategory } from '@/lib/token-icons'
 
 // ─── Types ────────────────────────────────────────────────────────────────────
 type TokenSize = 'tiny' | 'small' | 'medium' | 'large' | 'huge' | 'gargantuan' | 'colossal'
@@ -71,30 +72,21 @@ interface CombatLogEntry {
 }
 
 // ─── Constants ────────────────────────────────────────────────────────────────
-const TOKEN_ICONS = [
-  // Players / Heroes
-  '⚔️','🛡️','🏹','🪄','🔮','🗡️','🪃','💪','🤺','🧙',
-  // Humanoids
-  '🧝','🧟','🧛','🧜','🧚','👹','👺','🧞','🧌','💂',
-  '👑','🤴','👸','🧔','🥷','🤠','🦸','🦹','🧑‍⚕️','🧑‍🔬',
-  // Undead / Dark
-  '💀','☠️','👻','🦴','🧠','👁️','🫀','🕷️','🦇','🐍',
-  // Dragons / Beasts
-  '🐉','🐲','🦄','🦁','🐯','🐻','🐺','🦊','🦝','🦨',
-  '🐗','🦏','🐘','🦍','🦧','🐊','🦎','🐢','🦕','🦖',
-  // Monsters
-  '👾','👿','😈','🤡','🎃','🦑','🐙','🦈','🐡','🦞',
-  '🦂','🕸️','🦟','🐛','🐜','🦋','🪲','🪳','🦗','🐝',
-  // Mythical / Magic
-  '🔥','❄️','⚡','🌊','🌪️','☄️','💥','✨','🌟','⭐',
-  '🌙','☀️','🌈','🍄','🌿','🌸','💎','🔑','📜','⚗️',
-  // Objects / Environment
-  '🏰','⛪','🏚️','🌋','⛰️','🌲','🌳','🌵','🪨','💧',
-  '🔔','🪬','🗺️','⚙️','🔩','🪤','🧲','💣','🪃','🛡',
-  // Animals
-  '🐎','🦅','🦉','🦆','🐓','🦢','🦚','🦜','🐦','🦤',
-  '🐆','🐅','🦓','🦒','🐪','🦘','🦫','🦦','🦥','🐿️',
-]
+// Token icons are now SVG dark fantasy icons from lib/token-icons.ts
+// DARK_FANTASY_ICONS, getTokenIcon, isIconId, getIconsByCategory imported above
+
+// Category color accents for the icon picker
+const CATEGORY_COLORS: Record<string, string> = {
+  Untote: 'text-purple-400 border-purple-700/50',
+  Drachen: 'text-red-400 border-red-700/50',
+  Monster: 'text-orange-400 border-orange-700/50',
+  Tiere: 'text-green-400 border-green-700/50',
+  Helden: 'text-sky-400 border-sky-700/50',
+  Dämonen: 'text-rose-400 border-rose-700/50',
+  Magie: 'text-indigo-400 border-indigo-700/50',
+  Menschen: 'text-amber-400 border-amber-700/50',
+  Kreaturen: 'text-teal-400 border-teal-700/50',
+}
 
 interface ConditionDef { id: string; icon: string; color: string; bg: string; border: string }
 const CONDITIONS: ConditionDef[] = [
@@ -318,24 +310,48 @@ function TokenModal({ initial, onSave, onClose, title }: {
           <div>
             <label className="text-[10px] uppercase font-semibold text-zinc-500 block mb-1">Token-Symbol</label>
             <button onClick={() => setShowIcons(!showIcons)}
-              className="flex items-center gap-2 px-3 py-2 rounded-lg bg-zinc-800 border border-zinc-700 text-sm text-zinc-100 hover:border-zinc-500">
-              <span className="text-xl">{form.icon}</span>
-              <span className="text-zinc-400 text-xs">Symbol wählen</span>
-              {showIcons ? <ChevronDown className="w-4 h-4 text-zinc-500 ml-auto" /> : <ChevronRightIcon className="w-4 h-4 text-zinc-500 ml-auto" />}
+              className="flex items-center gap-2 px-3 py-2 rounded-lg bg-zinc-800 border border-zinc-700 text-sm text-zinc-100 hover:border-zinc-500 w-full">
+              <div className="w-7 h-7 rounded-full bg-zinc-700 flex items-center justify-center flex-shrink-0">
+                {isIconId(form.icon) ? (
+                  <svg viewBox="0 0 40 40" className="w-5 h-5"
+                    dangerouslySetInnerHTML={{ __html: getTokenIcon(form.icon)!.svg }} />
+                ) : (
+                  <span className="text-base leading-none">{form.icon}</span>
+                )}
+              </div>
+              <span className="text-zinc-400 text-xs flex-1 text-left">
+                {isIconId(form.icon) ? getTokenIcon(form.icon)!.name : form.icon}
+              </span>
+              {showIcons ? <ChevronDown className="w-4 h-4 text-zinc-500" /> : <ChevronRightIcon className="w-4 h-4 text-zinc-500" />}
             </button>
             {showIcons && (
-              <div className="mt-2 bg-zinc-900 rounded-xl p-3 border border-zinc-700">
-                <div className="grid grid-cols-10 gap-1 max-h-52 overflow-y-auto">
-                  {TOKEN_ICONS.map((icon, i) => (
-                    <button key={i} onClick={() => { setForm(f => ({ ...f, icon })); setShowIcons(false) }}
-                      className={`text-xl p-1.5 rounded-lg hover:bg-zinc-700 transition-colors ${form.icon === icon ? 'bg-red-900/30 ring-1 ring-red-700' : ''}`}>
-                      {icon}
-                    </button>
+              <div className="mt-2 bg-zinc-900 rounded-xl border border-zinc-700 overflow-hidden">
+                <div className="max-h-64 overflow-y-auto p-2 space-y-3">
+                  {Object.entries(getIconsByCategory()).map(([cat, icons]) => icons.length === 0 ? null : (
+                    <div key={cat}>
+                      <p className={`text-[9px] uppercase font-bold mb-1.5 px-1 ${CATEGORY_COLORS[cat]?.split(' ')[0] ?? 'text-zinc-500'}`}>{cat}</p>
+                      <div className="grid grid-cols-8 gap-1">
+                        {icons.map(icon => (
+                          <button key={icon.id}
+                            onClick={() => { setForm(f => ({ ...f, icon: icon.id })); setShowIcons(false) }}
+                            title={icon.name}
+                            className={`aspect-square rounded-lg flex items-center justify-center p-1 transition-all ${
+                              form.icon === icon.id
+                                ? 'bg-red-900/40 ring-1 ring-red-600'
+                                : 'bg-zinc-800 hover:bg-zinc-700'
+                            }`}>
+                            <svg viewBox="0 0 40 40" className="w-full h-full"
+                              dangerouslySetInnerHTML={{ __html: icon.svg }} />
+                          </button>
+                        ))}
+                      </div>
+                    </div>
                   ))}
                 </div>
-                <div className="mt-2 flex gap-2 border-t border-zinc-700 pt-2">
-                  <input className="flex-1 bg-zinc-800 border border-zinc-700 rounded-lg px-2 py-1 text-sm text-zinc-100 placeholder-zinc-600 focus:outline-none"
-                    placeholder="Eigenes Emoji…" onChange={e => { if (e.target.value) setForm(f => ({ ...f, icon: e.target.value })) }} />
+                <div className="border-t border-zinc-700 p-2">
+                  <input className="w-full bg-zinc-800 border border-zinc-700 rounded-lg px-2 py-1 text-xs text-zinc-100 placeholder-zinc-600 focus:outline-none"
+                    placeholder="Eigenes Emoji eingeben…"
+                    onChange={e => { if (e.target.value) { setForm(f => ({ ...f, icon: e.target.value })); setShowIcons(false) } }} />
                 </div>
               </div>
             )}
@@ -420,7 +436,15 @@ function TokenPiece({ token, selected, cellSize, isMoving, isDragged, isActiveTu
       {isActiveTurn && (
         <div className="absolute -top-1 -right-1 w-3 h-3 bg-amber-400 rounded-full animate-pulse" />
       )}
-      <span style={{ fontSize, lineHeight: 1 }}>{token.icon}</span>
+      {isIconId(token.icon) ? (
+        <svg
+          viewBox="0 0 40 40"
+          style={{ width: Math.round(fontSize * 1.4), height: Math.round(fontSize * 1.4) }}
+          dangerouslySetInnerHTML={{ __html: getTokenIcon(token.icon)!.svg }}
+        />
+      ) : (
+        <span style={{ fontSize, lineHeight: 1 }}>{token.icon}</span>
+      )}
       {pixW >= 36 && (
         <span className="text-[8px] font-bold text-zinc-200/90 leading-tight max-w-full truncate px-0.5 mt-0.5">
           {token.name.slice(0, 9)}
@@ -481,7 +505,12 @@ function TokenPanel({ token, onUpdate, onDelete, onClose, onEdit, isGM, myFavori
     <div className="bg-zinc-950 border border-zinc-800 rounded-xl p-4 space-y-3 w-72">
       {/* Header */}
       <div className="flex items-center gap-2">
-        <span className="text-2xl">{token.icon}</span>
+        {isIconId(token.icon) ? (
+          <svg viewBox="0 0 40 40" className="w-8 h-8 flex-shrink-0"
+            dangerouslySetInnerHTML={{ __html: getTokenIcon(token.icon)!.svg }} />
+        ) : (
+          <span className="text-2xl">{token.icon}</span>
+        )}
         <div className="flex-1 min-w-0">
           <p className="font-bold text-zinc-100 truncate">{token.name}</p>
           <p className="text-xs text-zinc-500">
@@ -757,6 +786,8 @@ export default function BattleMapPage() {
 
   // ── V17: Staging ──
   const [showStaging, setShowStaging] = useState(true)
+  // ── V19: Click-to-deploy ──
+  const [deployingTokenId, setDeployingTokenId] = useState<string | null>(null)
 
   // ── Encounter Presets ──
   const [encounters, setEncounters] = useState<Array<{id: string; name: string; description?: string; tokens: any[]}>>([])
@@ -811,6 +842,12 @@ export default function BattleMapPage() {
   const activeTurnToken = sortedInitiative.length > 0
     ? sortedInitiative[initiativeData.current_turn % sortedInitiative.length]
     : null
+  // V19: all tokens with the same initiative as the active token move simultaneously
+  const activeTurnGroup = useMemo(() => {
+    if (!activeTurnToken || !initiativeData.active) return new Set<string>()
+    const activeInit = activeTurnToken.initiative ?? 0
+    return new Set(sortedInitiative.filter(t => (t.initiative ?? 0) === activeInit).map(t => t.id))
+  }, [activeTurnToken, initiativeData.active, sortedInitiative])
 
   const fogSet = useMemo(() =>
     new Set((activeMap?.fog_cells ?? []).map(f => `${f.col},${f.row}`)),
@@ -1037,9 +1074,10 @@ export default function BattleMapPage() {
     }
   }, [supabase])
 
-  // ── Arrow key movement ──
+  // ── Arrow key movement + ESC for deploy cancel ──
   useEffect(() => {
     const onKey = (e: KeyboardEvent) => {
+      if (e.key === 'Escape') { setDeployingTokenId(null); return }
       if (!selectedToken || !activeMap) return
       if (e.target instanceof HTMLInputElement || e.target instanceof HTMLTextAreaElement || e.target instanceof HTMLSelectElement) return
       const dirs: Record<string, [number, number]> = {
@@ -1048,7 +1086,10 @@ export default function BattleMapPage() {
       const dir = dirs[e.key]; if (!dir) return
       e.preventDefault()
       const token = tokens.find(t => t.id === selectedToken); if (!token) return
-      const canMove = isGM || token.player_user_id === user?.id; if (!canMove) return
+      const ownsToken = isGM || token.player_user_id === user?.id
+      // V19: if initiative is active, token must be in the current initiative group
+      const inTurn = !initiativeData.active || isGM || activeTurnGroup.has(token.id)
+      const canMove = ownsToken && inTurn; if (!canMove) return
       const nc = token.col + dir[0], nr = token.row + dir[1]
       if (nc < 0 || nr < 0 || nc >= activeMap.grid_cols || nr >= activeMap.grid_rows) return
       const span = Math.max(1, Math.ceil(getSizeSpan(token.token_size)))
@@ -1071,7 +1112,7 @@ export default function BattleMapPage() {
     }
     window.addEventListener('keydown', onKey)
     return () => window.removeEventListener('keydown', onKey)
-  }, [selectedToken, tokens, activeMap, isGM, user, supabase])
+  }, [selectedToken, tokens, activeMap, isGM, user, supabase, initiativeData, activeTurnGroup])
 
   // ── Grid resize mouse handlers ──
   const handleResizeMouseMove = useCallback((e: MouseEvent) => {
@@ -1343,16 +1384,28 @@ export default function BattleMapPage() {
     setTokens(prev => prev.map(t => t.id === id ? { ...t, ...patch } : t))
   }
 
-  // ── V17: Deploy token from staging ──
-  const deployToken = async (id: string) => {
+  // ── V19: Deploy token by click-to-place ──
+  const deployToken = (id: string) => {
+    // Enter deploy mode — user clicks cell to place
+    setDeployingTokenId(id)
+  }
+
+  const deployTokenAt = async (id: string, col: number, row: number) => {
     if (!activeMap) return
-    const centerCol = Math.floor(activeMap.grid_cols / 2)
-    const centerRow = Math.floor(activeMap.grid_rows / 2)
-    await updateToken(id, { is_staged: false, col: centerCol, row: centerRow })
-    const token = tokens.find(t => t.id === id)
-    if (token) {
-      addLogEntry(activeMap.id, token.name, 'move', `${token.name} wurde auf das Spielfeld gebracht`, true)
+    // Check overlap — is the cell occupied?
+    const tokenToPlace = tokens.find(t => t.id === id)
+    const span = Math.max(1, Math.ceil(getSizeSpan(tokenToPlace?.token_size || 'medium')))
+    const occupied = mapTokens.some(t => {
+      if (t.id === id) return false
+      const os = Math.max(1, Math.ceil(getSizeSpan(t.token_size || 'medium')))
+      return !(col + span <= t.col || col >= t.col + os || row + span <= t.row || row >= t.row + os)
+    })
+    if (occupied) return
+    await updateToken(id, { is_staged: false, col, row })
+    if (tokenToPlace) {
+      addLogEntry(activeMap.id, tokenToPlace.name, 'move', `${tokenToPlace.name} wurde auf das Spielfeld gebracht`, true)
     }
+    setDeployingTokenId(null)
   }
 
   const saveEditedToken = async (form: typeof BLANK_TOKEN_FORM) => {
@@ -1554,6 +1607,11 @@ export default function BattleMapPage() {
     // Fog brush is handled by mousedown/mousemove, not click
     if (fogMode && isGM) return
     const cell = getCellFromEvent(e); if (!cell) return
+    // ── V19: Click-to-deploy mode ──
+    if (deployingTokenId) {
+      deployTokenAt(deployingTokenId, cell.col, cell.row)
+      return
+    }
     if (terrainMode && isGM) { toggleTerrain(cell.col, cell.row); return }
     if (effectMode) {
       const et = EFFECT_TYPES.find(x => x.id === effectMode)
@@ -2205,21 +2263,38 @@ export default function BattleMapPage() {
                     </div>
                   </div>
 
-                  {/* Navigation buttons */}
-                  <div className="flex gap-2">
-                    <button onClick={prevTurnFn}
-                      className="flex items-center gap-1 px-3 py-2 rounded-lg bg-zinc-800 border border-zinc-700 text-xs text-zinc-400 hover:text-zinc-200">
-                      <SkipBack className="w-3.5 h-3.5" /> Zurück
-                    </button>
-                    <button onClick={advanceTurn}
-                      className="flex-1 flex items-center justify-center gap-1.5 py-2 rounded-lg bg-amber-800 hover:bg-amber-700 border border-amber-600/60 text-xs font-bold text-amber-100">
-                      <SkipForward className="w-3.5 h-3.5" /> Nächster Zug
-                    </button>
-                    <button onClick={resetInitiative}
-                      className="flex items-center gap-1 px-3 py-2 rounded-lg bg-zinc-800 border border-zinc-700 text-xs text-zinc-400 hover:text-zinc-200" title="Kampf zurücksetzen">
-                      <RotateCcw className="w-3.5 h-3.5" />
-                    </button>
-                  </div>
+                  {/* Navigation buttons – GM only */}
+                  {isGM ? (
+                    <div className="flex gap-2">
+                      <button onClick={prevTurnFn}
+                        className="flex items-center gap-1 px-3 py-2 rounded-lg bg-zinc-800 border border-zinc-700 text-xs text-zinc-400 hover:text-zinc-200">
+                        <SkipBack className="w-3.5 h-3.5" /> Zurück
+                      </button>
+                      <button onClick={advanceTurn}
+                        className="flex-1 flex items-center justify-center gap-1.5 py-2 rounded-lg bg-amber-800 hover:bg-amber-700 border border-amber-600/60 text-xs font-bold text-amber-100">
+                        <SkipForward className="w-3.5 h-3.5" /> Nächster Zug
+                      </button>
+                      <button onClick={resetInitiative}
+                        className="flex items-center gap-1 px-3 py-2 rounded-lg bg-zinc-800 border border-zinc-700 text-xs text-zinc-400 hover:text-zinc-200" title="Kampf zurücksetzen">
+                        <RotateCcw className="w-3.5 h-3.5" />
+                      </button>
+                    </div>
+                  ) : (
+                    /* V19: Player "end turn" button - only visible when it's their token's turn */
+                    (() => {
+                      const myActiveToken = sortedInitiative.find(t =>
+                        activeTurnGroup.has(t.id) && t.player_user_id === user?.id
+                      )
+                      return myActiveToken ? (
+                        <button onClick={advanceTurn}
+                          className="w-full flex items-center justify-center gap-2 py-2.5 rounded-lg bg-amber-800 hover:bg-amber-700 border border-amber-600/60 text-sm font-bold text-amber-100 transition-colors shadow-lg shadow-amber-900/30">
+                          <SkipForward className="w-4 h-4" /> Zug beenden
+                        </button>
+                      ) : (
+                        <div className="text-center text-xs text-zinc-600 py-2">Warte auf deinen Zug…</div>
+                      )
+                    })()
+                  )}
                 </div>
 
                 {/* ── Party HP Overview ── */}
@@ -2267,7 +2342,7 @@ export default function BattleMapPage() {
                   {sortedInitiative.map((t, idx) => {
                     const activeConds = CONDITIONS.filter(c => t.conditions.includes(c.id))
                     const remainFt = (t.speed ?? 0) - (t.movement_used ?? 0)
-                    const isActive = activeTurnToken?.id === t.id
+                    const isActive = initiativeData.active && activeTurnGroup.size > 0 ? activeTurnGroup.has(t.id) : activeTurnToken?.id === t.id
                     return (
                       <div key={t.id} onClick={() => setSelectedToken(t.id === selectedToken ? null : t.id)}
                         className={`flex items-center gap-3 px-3 py-2.5 rounded-lg border cursor-pointer transition-all ${
@@ -2284,7 +2359,12 @@ export default function BattleMapPage() {
                         <div className="w-7 h-7 rounded flex items-center justify-center bg-zinc-800/80 border border-zinc-700/60 flex-shrink-0">
                           <span className="text-xs font-bold text-amber-500">{modSign(t.initiative ?? 0)}</span>
                         </div>
-                        <span className="text-xl flex-shrink-0">{t.icon}</span>
+                        {isIconId(t.icon) ? (
+                          <svg viewBox="0 0 40 40" className="w-6 h-6 flex-shrink-0"
+                            dangerouslySetInnerHTML={{ __html: getTokenIcon(t.icon)!.svg }} />
+                        ) : (
+                          <span className="text-xl flex-shrink-0">{t.icon}</span>
+                        )}
                         <div className="flex-1 min-w-0">
                           <div className="flex items-center gap-1.5 flex-wrap">
                             <p className="text-sm font-semibold text-zinc-200 truncate">{t.name}</p>
@@ -2439,7 +2519,12 @@ export default function BattleMapPage() {
                         }`}
                         onClick={() => setSelectedToken(t.id === selectedToken ? null : t.id)}>
                         <div className="flex items-center gap-1.5 mb-1">
-                          <span className="text-base">{t.icon}</span>
+                          {isIconId(t.icon) ? (
+                            <svg viewBox="0 0 40 40" className="w-5 h-5 flex-shrink-0"
+                              dangerouslySetInnerHTML={{ __html: getTokenIcon(t.icon)!.svg }} />
+                          ) : (
+                            <span className="text-base flex-shrink-0">{t.icon}</span>
+                          )}
                           <div className="flex-1 min-w-0">
                             <p className="text-[11px] font-semibold text-zinc-200 truncate">{t.name}</p>
                             <span className={`text-[9px] px-1 py-0.5 rounded font-medium ${
@@ -2453,8 +2538,12 @@ export default function BattleMapPage() {
                         </div>
                         <button
                           onClick={e => { e.stopPropagation(); deployToken(t.id) }}
-                          className="w-full py-1 rounded bg-emerald-900/30 border border-emerald-700/50 text-[10px] text-emerald-300 hover:bg-emerald-900/50 font-semibold">
-                          Deploy
+                          className={`w-full py-1 rounded border text-[10px] font-semibold transition-colors ${
+                            deployingTokenId === t.id
+                              ? 'bg-emerald-600/40 border-emerald-500/70 text-emerald-200 animate-pulse'
+                              : 'bg-emerald-900/30 border-emerald-700/50 text-emerald-300 hover:bg-emerald-900/50'
+                          }`}>
+                          {deployingTokenId === t.id ? '📍 Feld klicken…' : '⬇ Platzieren'}
                         </button>
                       </div>
                     ))}
@@ -2753,30 +2842,63 @@ export default function BattleMapPage() {
                     {EFFECT_TYPES.find(e => e.id === effectMode)?.icon} Effektmodus — Klicke auf ein Feld
                   </div>
                 )}
-                {!moveMode && !terrainMode && !effectMode && !fogMode && (
+                {!moveMode && !terrainMode && !effectMode && !fogMode && !deployingTokenId && (
                   <div className="absolute bottom-10 right-3 text-zinc-700 text-[10px] pointer-events-none">
                     Ziehen oder Pfeiltasten zum Bewegen · Mausrad = Zoom · Mitteltaste = Pan
                   </div>
                 )}
+                {/* V19: Click-to-deploy banner */}
+                {deployingTokenId && (
+                  <div className="absolute top-1/2 left-1/2 -translate-x-1/2 -translate-y-1/2 pointer-events-none z-30">
+                    <div className="bg-black/80 backdrop-blur-md border border-emerald-500/40 rounded-2xl px-6 py-4 text-center shadow-2xl">
+                      <p className="text-emerald-300 font-bold text-base">📍 Klicke auf ein Feld</p>
+                      <p className="text-zinc-400 text-xs mt-1">um die Figur zu platzieren</p>
+                      <p className="text-zinc-600 text-[10px] mt-2">ESC zum Abbrechen</p>
+                    </div>
+                  </div>
+                )}
               </div>
 
-              {/* ── V17: Dice Wall Overlay (bottom-left of viewport, not canvas) ── */}
+              {/* ── V19: Dice Wall – redesigned glassmorphism overlay ── */}
               {filteredDiceWall.length > 0 && (
-                <div className="absolute bottom-3 left-3 z-20 flex flex-col items-start gap-1 pointer-events-auto">
+                <div className="absolute bottom-3 left-3 z-20 flex flex-col items-start gap-1.5 pointer-events-auto">
                   <button
                     onClick={() => setShowDiceWall(!showDiceWall)}
-                    className="flex items-center gap-1.5 px-2 py-1 rounded-full bg-black/70 backdrop-blur border border-zinc-700/60 text-zinc-400 text-[10px] hover:text-zinc-200 transition-colors">
-                    🎲 Würfelwand {showDiceWall ? '▾' : '▸'}
+                    className="flex items-center gap-1.5 px-3 py-1.5 rounded-full bg-black/60 backdrop-blur-md border border-white/10 text-zinc-300 text-[11px] font-semibold hover:bg-black/80 hover:border-white/20 transition-all shadow-lg">
+                    <span className="text-base leading-none">🎲</span>
+                    <span>Würfelwand</span>
+                    <span className="ml-1 opacity-60">{showDiceWall ? '▾' : '▸'}</span>
                   </button>
                   {showDiceWall && (
-                    <div className="bg-black/70 backdrop-blur-sm border border-zinc-700/50 rounded-xl p-2.5 space-y-1 min-w-40 max-w-48">
-                      {filteredDiceWall.slice(0, 7).map(r => (
-                        <div key={r.id} className="flex items-center gap-2 text-[10px]">
-                          <span className="text-zinc-500 truncate max-w-20">{r.label ?? 'Wurf'}</span>
-                          <span className="ml-auto font-bold tabular-nums text-amber-400">{r.total}</span>
-                          <span className="text-zinc-600">{r.dice_config?.map(d => `${d.count}${d.type}`).join('+') ?? ''}</span>
-                        </div>
-                      ))}
+                    <div className="bg-black/55 backdrop-blur-xl border border-white/10 rounded-2xl shadow-2xl shadow-black/60 overflow-hidden min-w-[200px] max-w-[240px]">
+                      {filteredDiceWall.slice(0, 6).map((r, i) => {
+                        const allRolls = r.results?.flat() ?? []
+                        const hasNat20 = allRolls.includes(20)
+                        const hasNat1 = allRolls.includes(1) && !hasNat20
+                        const diceLabel = r.dice_config?.map(d => `${d.count}${d.type}`).join('+') ?? ''
+                        return (
+                          <div key={r.id}
+                            className={`flex items-center gap-3 px-3 py-2 border-b border-white/5 last:border-0 ${
+                              hasNat20 ? 'bg-amber-500/10' : hasNat1 ? 'bg-red-900/20' : i === 0 ? 'bg-white/5' : ''
+                            }`}>
+                            {/* Left: label + dice */}
+                            <div className="flex-1 min-w-0">
+                              <p className="text-[10px] font-semibold text-zinc-200 truncate leading-tight">
+                                {r.label ?? 'Wurf'}
+                              </p>
+                              <p className="text-[9px] text-zinc-500 font-mono leading-tight">{diceLabel}</p>
+                            </div>
+                            {/* Right: total + badge */}
+                            <div className="flex items-center gap-1.5 flex-shrink-0">
+                              {hasNat20 && <span className="text-[9px] font-bold text-amber-400 bg-amber-900/40 rounded px-1">KRIT</span>}
+                              {hasNat1  && <span className="text-[9px] font-bold text-red-400 bg-red-900/40 rounded px-1">PATZER</span>}
+                              <span className={`text-lg font-black tabular-nums leading-none ${
+                                hasNat20 ? 'text-amber-300' : hasNat1 ? 'text-red-400' : 'text-white'
+                              }`}>{r.total}</span>
+                            </div>
+                          </div>
+                        )
+                      })}
                     </div>
                   )}
                 </div>
