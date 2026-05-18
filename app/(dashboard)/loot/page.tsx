@@ -100,6 +100,7 @@ export default function LootPage() {
   const [entryForm, setEntryForm] = useState(BLANK_ENTRY_FORM)
   const [editingEntryId, setEditingEntryId] = useState<string | null>(null)
   const [savingEntry, setSavingEntry] = useState(false)
+  const [viewRarity, setViewRarity] = useState<LootRarityKey>('common')
 
   useEffect(() => {
     loadItems()
@@ -183,6 +184,28 @@ export default function LootPage() {
   }
 
   // ── Loot Table Editor (GM) ───────────────────────────────────────────────
+  function parseRange(range: string): { min: number; max: number } | null {
+    if (!range || range === '####') return null
+    const r = range.trim()
+    if (r.includes('-')) {
+      const parts = r.split('-')
+      const min = parseInt(parts[0])
+      const max = parseInt(parts[1] === '00' ? '100' : parts[1])
+      if (!isNaN(min) && !isNaN(max)) return { min, max }
+    } else {
+      const n = parseInt(r === '00' ? '100' : r)
+      if (!isNaN(n)) return { min: n, max: n }
+    }
+    return null
+  }
+
+  const adoptStaticEntry = (item: string, category: string, rarity: string, min: number, max: number) => {
+    setEntryForm({ name: item, description: '', category, rarity, dice_type: 'd100', min_roll: min, max_roll: max, prerequisites: '' })
+    setEditingEntryId(null)
+    setShowEntryForm(true)
+    window.scrollTo({ top: 0, behavior: 'smooth' })
+  }
+
   const loadLootTable = async () => {
     const { data } = await supabase
       .from('loot_table_entries')
@@ -542,22 +565,15 @@ export default function LootPage() {
       {/* ── Loot-Tabellen-Editor (GM only) ─────────────────────────────── */}
       {activeTab === 'loot_table' && isGM && (
         <div className="space-y-4">
-          {/* Add/Edit form */}
-          <div className="flex items-center justify-between">
-            <p className="text-sm font-semibold text-zinc-300">
-              GM Loot-Tabelle — {lootTableEntries.length} Einträge
-            </p>
-            <button
-              onClick={() => { setShowEntryForm(v => !v); setEditingEntryId(null); setEntryForm(BLANK_ENTRY_FORM) }}
-              className="flex items-center gap-1.5 px-3 py-1.5 rounded-lg bg-violet-700 hover:bg-violet-600 text-xs font-semibold text-white transition-colors"
-            >
-              <Plus className="w-3.5 h-3.5" /> Neuer Eintrag
-            </button>
-          </div>
 
+          {/* ── Add/Edit form (modal-style) ── */}
           {showEntryForm && (
             <div className="bg-zinc-900 border border-violet-700/50 rounded-xl p-4 space-y-3">
-              <p className="text-sm font-semibold text-violet-300">{editingEntryId ? 'Eintrag bearbeiten' : 'Neuer Loot-Tabellen-Eintrag'}</p>
+              <div className="flex items-center justify-between">
+                <p className="text-sm font-semibold text-violet-300">{editingEntryId ? '✏️ Eintrag bearbeiten' : '➕ Neuer Loot-Tabellen-Eintrag'}</p>
+                <button onClick={() => { setShowEntryForm(false); setEditingEntryId(null); setEntryForm(BLANK_ENTRY_FORM) }}
+                  className="text-zinc-600 hover:text-zinc-300"><X className="w-4 h-4" /></button>
+              </div>
 
               <div className="grid grid-cols-2 gap-3">
                 <div className="col-span-2">
@@ -631,69 +647,218 @@ export default function LootPage() {
             </div>
           )}
 
-          {/* Entry list */}
-          {lootTableEntries.length === 0 ? (
-            <div className="text-center text-zinc-600 py-12">
-              <Table2 className="w-10 h-10 mx-auto mb-3 opacity-30" />
-              <p className="text-sm">Noch keine Loot-Tabellen-Einträge.</p>
-              <p className="text-xs mt-1">Füge eigene Items hinzu, die beim Würfeln erscheinen sollen.</p>
+          {/* ── Header: Seltenheits-Filter + Neuer Eintrag ── */}
+          <div className="bg-zinc-900 border border-zinc-800 rounded-xl overflow-hidden">
+            <div className="flex items-center justify-between px-3 py-2 border-b border-zinc-800">
+              <div className="flex gap-1 flex-1">
+                {ENTRY_RARITIES.map(r => {
+                  const dbCount = lootTableEntries.filter(e => e.rarity === r.key).length
+                  return (
+                    <button key={r.key} onClick={() => setViewRarity(r.key as LootRarityKey)}
+                      className={`flex-1 py-1.5 rounded text-xs font-semibold transition-colors relative ${viewRarity === r.key ? RARITY_ROLL_COLORS[r.key as LootRarityKey] + ' border' : 'text-zinc-500 hover:text-zinc-300'}`}>
+                      {r.label}
+                      {dbCount > 0 && (
+                        <span className="absolute -top-1 -right-1 w-4 h-4 rounded-full bg-violet-600 text-white text-[9px] flex items-center justify-center font-bold">
+                          {dbCount}
+                        </span>
+                      )}
+                    </button>
+                  )
+                })}
+              </div>
+              <button
+                onClick={() => {
+                  setEntryForm({ ...BLANK_ENTRY_FORM, rarity: viewRarity })
+                  setEditingEntryId(null)
+                  setShowEntryForm(v => !v)
+                }}
+                className="flex items-center gap-1.5 ml-2 px-3 py-1.5 rounded-lg bg-violet-700 hover:bg-violet-600 text-xs font-semibold text-white transition-colors flex-shrink-0"
+              >
+                <Plus className="w-3.5 h-3.5" /> Neu
+              </button>
             </div>
-          ) : (
-            <div className="space-y-1.5">
-              {/* Group by category */}
-              {ENTRY_CATEGORIES.filter(cat => lootTableEntries.some(e => e.category === cat)).map(cat => (
-                <div key={cat} className="bg-zinc-900 border border-zinc-800 rounded-xl overflow-hidden">
-                  <div className="px-4 py-2.5 bg-zinc-800/60 border-b border-zinc-700">
-                    <p className="text-xs font-bold text-zinc-300 uppercase tracking-wide">{cat}</p>
-                  </div>
-                  <div className="divide-y divide-zinc-800/60">
-                    {lootTableEntries.filter(e => e.category === cat).map(entry => {
-                      const rarityLabel = ENTRY_RARITIES.find(r => r.key === entry.rarity)?.label ?? entry.rarity
-                      const rarityColor =
-                        entry.rarity === 'legendary' ? 'text-amber-300' :
-                        entry.rarity === 'very_rare' ? 'text-purple-300' :
-                        entry.rarity === 'rare'      ? 'text-blue-300' :
-                        entry.rarity === 'uncommon'  ? 'text-green-300' : 'text-zinc-400'
-                      return (
-                        <div key={entry.id} className={`flex items-start gap-3 px-4 py-3 hover:bg-zinc-800/30 transition-colors ${!entry.is_active ? 'opacity-50' : ''}`}>
-                          <div className="flex-1 min-w-0">
-                            <div className="flex items-center gap-2 flex-wrap">
-                              <span className="text-sm font-semibold text-zinc-100">{entry.name}</span>
-                              <span className={`text-[11px] font-medium ${rarityColor}`}>{rarityLabel}</span>
-                              <span className="text-[11px] text-zinc-600 bg-zinc-800 rounded px-1.5 py-0.5 font-mono">
-                                {entry.dice_type} {entry.min_roll}–{entry.max_roll}
-                              </span>
+
+            {/* ── Unified merged table per category ── */}
+            <div className="divide-y divide-zinc-800/50">
+              {LOOT_CATEGORIES.map(cat => {
+                // Static entries for this rarity+category
+                const staticEntries = (LOOT_TABLES[viewRarity]?.[cat.key] ?? [])
+                  .map(e => ({ ...e, parsed: parseRange(e.range) }))
+                  .filter(e => e.parsed !== null)
+
+                // DB entries for this rarity+category
+                const dbEntries = lootTableEntries.filter(
+                  e => e.category === cat.key && e.rarity === viewRarity
+                )
+
+                // Also find DB entries for Custom category (no static equivalent)
+                // Merge: DB entries override static at same range; remaining static shown dimmed
+                type MergedRow =
+                  | { type: 'db'; entry: LootTableEntry; min: number; max: number }
+                  | { type: 'static'; item: string; range: string; min: number; max: number; overridden: boolean }
+
+                const rows: MergedRow[] = []
+
+                // Add all DB entries
+                for (const db of dbEntries) {
+                  rows.push({ type: 'db', entry: db, min: db.min_roll, max: db.max_roll })
+                }
+
+                // Add static entries not already covered by a DB entry with exact same range
+                for (const se of staticEntries) {
+                  const { min, max } = se.parsed!
+                  const exactMatch = dbEntries.some(db => db.min_roll === min && db.max_roll === max)
+                  rows.push({
+                    type: 'static', item: se.item, range: se.range, min, max, overridden: exactMatch,
+                  })
+                }
+
+                // Sort by min roll
+                rows.sort((a, b) => a.min - b.min)
+
+                if (rows.length === 0) return null
+
+                return (
+                  <div key={cat.key}>
+                    <div className="px-4 py-2 bg-zinc-800/30 flex items-center gap-2">
+                      <span>{CATEGORY_ICONS[cat.key as LootCategory] ?? '📦'}</span>
+                      <p className="text-xs font-semibold text-zinc-400 uppercase tracking-wide">{cat.key}</p>
+                      <span className="text-[10px] text-zinc-600 ml-auto">
+                        {dbEntries.length > 0 && (
+                          <span className="text-violet-400 font-semibold mr-2">{dbEntries.length} angepasst</span>
+                        )}
+                        {staticEntries.length} Standard
+                      </span>
+                    </div>
+                    <div className="divide-y divide-zinc-800/30">
+                      {rows.map((row, i) => {
+                        if (row.type === 'db') {
+                          const entry = row.entry
+                          const rarityColor =
+                            entry.rarity === 'legendary' ? 'text-amber-300' :
+                            entry.rarity === 'very_rare' ? 'text-purple-300' :
+                            entry.rarity === 'rare'      ? 'text-blue-300' :
+                            entry.rarity === 'uncommon'  ? 'text-green-300' : 'text-zinc-400'
+                          return (
+                            <div key={'db-' + entry.id} className={`flex items-start gap-2 px-4 py-2.5 bg-violet-950/20 hover:bg-violet-950/30 transition-colors ${!entry.is_active ? 'opacity-40' : ''}`}>
+                              {/* Range badge */}
+                              <div className="flex-shrink-0 w-14 text-center pt-0.5">
+                                <span className="text-[10px] font-mono text-violet-400 bg-violet-900/30 rounded px-1.5 py-0.5">{entry.dice_type}</span>
+                                <p className="text-[11px] font-bold text-violet-300 mt-0.5">{entry.min_roll}–{entry.max_roll}</p>
+                              </div>
+                              {/* Content */}
+                              <div className="flex-1 min-w-0">
+                                <div className="flex items-center gap-1.5 flex-wrap">
+                                  <span className="text-[10px] font-bold text-violet-400 bg-violet-900/40 rounded px-1 py-0.5 uppercase tracking-wide">✏️ Angepasst</span>
+                                  <span className={`text-sm font-semibold text-zinc-100 ${!entry.is_active ? 'line-through' : ''}`}>{entry.name}</span>
+                                </div>
+                                {entry.prerequisites && (
+                                  <p className="text-[11px] text-amber-400/70 mt-0.5">⚠️ {entry.prerequisites}</p>
+                                )}
+                                {entry.description && (
+                                  <p className="text-xs text-zinc-500 mt-0.5 line-clamp-2">{entry.description}</p>
+                                )}
+                              </div>
+                              {/* Actions */}
+                              <div className="flex items-center gap-0.5 flex-shrink-0 mt-0.5">
+                                <button onClick={() => toggleEntryActive(entry.id, entry.is_active)}
+                                  title={entry.is_active ? 'Deaktivieren' : 'Aktivieren'}
+                                  className={`p-1.5 rounded transition-colors ${entry.is_active ? 'text-emerald-400 hover:text-emerald-300' : 'text-zinc-600 hover:text-zinc-400'}`}>
+                                  {entry.is_active ? <ToggleRight className="w-4 h-4" /> : <ToggleLeft className="w-4 h-4" />}
+                                </button>
+                                <button onClick={() => { startEditEntry(entry); setShowEntryForm(true) }}
+                                  className="p-1.5 text-zinc-500 hover:text-violet-400 transition-colors" title="Bearbeiten">
+                                  <Edit2 className="w-3.5 h-3.5" />
+                                </button>
+                                <button onClick={() => deleteEntry(entry.id)}
+                                  className="p-1.5 text-zinc-600 hover:text-red-400 transition-colors" title="Löschen">
+                                  <Trash2 className="w-3.5 h-3.5" />
+                                </button>
+                              </div>
                             </div>
-                            {entry.prerequisites && (
-                              <p className="text-[11px] text-amber-400/70 mt-0.5">⚠️ {entry.prerequisites}</p>
-                            )}
-                            {entry.description && (
-                              <p className="text-xs text-zinc-500 mt-0.5 line-clamp-2">{entry.description}</p>
-                            )}
+                          )
+                        } else {
+                          // Static entry
+                          if (row.overridden) {
+                            // Already overridden by a DB entry — show dimmed
+                            return (
+                              <div key={'static-' + i} className="flex items-center gap-2 px-4 py-1.5 opacity-25">
+                                <span className="text-[11px] font-mono text-zinc-600 w-14 flex-shrink-0 text-right">{row.range}</span>
+                                <span className="flex-1 text-xs text-zinc-600 line-through">{row.item}</span>
+                                <span className="text-[10px] text-violet-500 flex-shrink-0">ersetzt</span>
+                              </div>
+                            )
+                          }
+                          return (
+                            <div key={'static-' + i} className="flex items-center gap-2 px-4 py-2 hover:bg-zinc-800/20 transition-colors group">
+                              <span className="text-[11px] font-mono text-zinc-500 w-14 flex-shrink-0 text-right">{row.range}</span>
+                              <span className="flex-1 text-sm text-zinc-300">{row.item}</span>
+                              <button
+                                onClick={() => adoptStaticEntry(row.item, cat.key, viewRarity, row.min, row.max)}
+                                className="flex-shrink-0 flex items-center gap-1 px-2 py-1 rounded border text-[10px] font-semibold opacity-0 group-hover:opacity-100 transition-all bg-zinc-800 border-zinc-700 text-zinc-400 hover:bg-violet-900/40 hover:border-violet-600 hover:text-violet-300"
+                                title="Eintrag übernehmen und bearbeiten"
+                              >
+                                <Edit2 className="w-2.5 h-2.5" /> Bearbeiten
+                              </button>
+                            </div>
+                          )
+                        }
+                      })}
+                    </div>
+                  </div>
+                )
+              })}
+
+              {/* Custom category DB entries (no static equivalent) */}
+              {(() => {
+                const customDbEntries = lootTableEntries.filter(e => e.category === 'Custom' && e.rarity === viewRarity)
+                if (customDbEntries.length === 0) return null
+                return (
+                  <div key="custom">
+                    <div className="px-4 py-2 bg-zinc-800/30 flex items-center gap-2">
+                      <span>📦</span>
+                      <p className="text-xs font-semibold text-zinc-400 uppercase tracking-wide">Custom</p>
+                      <span className="text-[10px] text-violet-400 font-semibold ml-auto">{customDbEntries.length} Einträge</span>
+                    </div>
+                    <div className="divide-y divide-zinc-800/30">
+                      {customDbEntries.sort((a, b) => a.min_roll - b.min_roll).map(entry => (
+                        <div key={entry.id} className={`flex items-start gap-2 px-4 py-2.5 bg-violet-950/20 hover:bg-violet-950/30 transition-colors ${!entry.is_active ? 'opacity-40' : ''}`}>
+                          <div className="flex-shrink-0 w-14 text-center pt-0.5">
+                            <span className="text-[10px] font-mono text-violet-400 bg-violet-900/30 rounded px-1.5 py-0.5">{entry.dice_type}</span>
+                            <p className="text-[11px] font-bold text-violet-300 mt-0.5">{entry.min_roll}–{entry.max_roll}</p>
                           </div>
-                          <div className="flex items-center gap-1.5 flex-shrink-0 mt-0.5">
+                          <div className="flex-1 min-w-0">
+                            <span className={`text-sm font-semibold text-zinc-100 ${!entry.is_active ? 'line-through' : ''}`}>{entry.name}</span>
+                            {entry.description && <p className="text-xs text-zinc-500 mt-0.5 line-clamp-1">{entry.description}</p>}
+                          </div>
+                          <div className="flex items-center gap-0.5 flex-shrink-0 mt-0.5">
                             <button onClick={() => toggleEntryActive(entry.id, entry.is_active)}
-                              title={entry.is_active ? 'Deaktivieren' : 'Aktivieren'}
-                              className={`p-1 rounded transition-colors ${entry.is_active ? 'text-emerald-400 hover:text-emerald-300' : 'text-zinc-600 hover:text-zinc-400'}`}>
+                              className={`p-1.5 rounded transition-colors ${entry.is_active ? 'text-emerald-400 hover:text-emerald-300' : 'text-zinc-600 hover:text-zinc-400'}`}>
                               {entry.is_active ? <ToggleRight className="w-4 h-4" /> : <ToggleLeft className="w-4 h-4" />}
                             </button>
-                            <button onClick={() => startEditEntry(entry)}
-                              className="p-1 text-zinc-500 hover:text-violet-400 transition-colors">
+                            <button onClick={() => { startEditEntry(entry); setShowEntryForm(true) }}
+                              className="p-1.5 text-zinc-500 hover:text-violet-400 transition-colors">
                               <Edit2 className="w-3.5 h-3.5" />
                             </button>
                             <button onClick={() => deleteEntry(entry.id)}
-                              className="p-1 text-zinc-600 hover:text-red-400 transition-colors">
+                              className="p-1.5 text-zinc-600 hover:text-red-400 transition-colors">
                               <Trash2 className="w-3.5 h-3.5" />
                             </button>
                           </div>
                         </div>
-                      )
-                    })}
+                      ))}
+                    </div>
                   </div>
-                </div>
-              ))}
+                )
+              })()}
             </div>
-          )}
+          </div>
+
+          {/* Info: gesamt */}
+          <p className="text-center text-xs text-zinc-600 py-1">
+            {lootTableEntries.filter(e => e.rarity === viewRarity).length} angepasste Einträge für{' '}
+            {ENTRY_RARITIES.find(r => r.key === viewRarity)?.label} — hover auf Standard-Zeile zum Übernehmen+Bearbeiten
+          </p>
         </div>
       )}
 
