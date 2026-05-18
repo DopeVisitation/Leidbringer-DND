@@ -1118,6 +1118,8 @@ export default function BattleMapPage() {
   // ── V17: Dice Wall ──
   const [diceWallRolls, setDiceWallRolls] = useState<DiceRollEntry[]>([])
   const [showDiceWall, setShowDiceWall] = useState(true)
+  const [showCharPanel, setShowCharPanel] = useState(false)
+  const [charLinkData, setCharLinkData] = useState<any>(null)
 
   // ── V17: Combat Log ──
   const [combatLog, setCombatLog] = useState<CombatLogEntry[]>([])
@@ -1178,6 +1180,22 @@ export default function BattleMapPage() {
   useEffect(() => { tokensRef.current = tokens }, [tokens])
   useEffect(() => { isGMRef.current = isGM }, [isGM])
   useEffect(() => { userRef.current = user }, [user])
+
+  // ── Character panel data ──
+  useEffect(() => {
+    if (!user) return
+    const loadChar = async () => {
+      const { data } = await supabase
+        .from('character_links')
+        .select('*')
+        .eq('user_id', user.id)
+        .order('created_at', { ascending: false })
+        .limit(1)
+        .single()
+      if (data) setCharLinkData(data)
+    }
+    loadChar()
+  }, [user]) // eslint-disable-line react-hooks/exhaustive-deps
 
   // ── Computed ──
   const cs = activeMap?.cell_size ?? 50
@@ -4654,6 +4672,129 @@ export default function BattleMapPage() {
           </div>
         )}
       </div>
+
+      {/* ─── Character Sheet Tab ─────────────────────────────────── */}
+      {charLinkData && (
+        <button
+          onClick={() => setShowCharPanel(v => !v)}
+          style={{ writingMode: 'vertical-rl' }}
+          className="fixed right-0 top-1/2 -translate-y-1/2 z-40 bg-zinc-800 border border-zinc-700 border-r-0 rounded-l-lg px-2 py-3 text-xs font-semibold text-zinc-300 hover:text-zinc-100 hover:bg-zinc-700 transition-colors shadow-lg"
+          title="Charakterbogen einblenden"
+        >
+          📋 {charLinkData?.character_name ?? 'Char'}
+        </button>
+      )}
+
+      {showCharPanel && charLinkData && (
+        <div className="fixed right-0 top-0 h-full w-80 z-50 flex flex-col bg-zinc-900 border-l border-zinc-700 shadow-2xl overflow-hidden">
+          {/* Header */}
+          <div className="flex items-center justify-between px-4 py-3 border-b border-zinc-800 flex-shrink-0">
+            <div>
+              <p className="text-sm font-bold text-zinc-100">{charLinkData.character_name}</p>
+              <p className="text-xs text-zinc-500">{charLinkData.class_name} · Level {charLinkData.level}</p>
+            </div>
+            <button onClick={() => setShowCharPanel(false)} className="text-zinc-500 hover:text-zinc-300 p-1">
+              <X className="w-4 h-4" />
+            </button>
+          </div>
+          {/* Scrollable content */}
+          <div className="flex-1 overflow-y-auto p-4 space-y-4 text-xs">
+            {/* HP */}
+            {charLinkData.full_data?.max_hp != null && (
+              <div>
+                <p className="text-[10px] uppercase font-semibold text-zinc-500 mb-1">HP</p>
+                <div className="flex items-center gap-2">
+                  <span className="text-lg font-bold text-red-400">{(charLinkData as any).current_hp ?? charLinkData.full_data.max_hp}</span>
+                  <span className="text-zinc-600">/ {charLinkData.full_data.max_hp}</span>
+                </div>
+                <div className="w-full h-1.5 bg-zinc-700 rounded-full mt-1">
+                  <div
+                    className="h-full bg-red-500 rounded-full transition-all"
+                    style={{ width: `${Math.max(0, Math.min(100, ((charLinkData as any).current_hp ?? charLinkData.full_data.max_hp) / charLinkData.full_data.max_hp * 100))}%` }}
+                  />
+                </div>
+              </div>
+            )}
+            {/* AC + Initiative + Speed */}
+            {charLinkData.full_data && (
+              <div className="grid grid-cols-3 gap-2">
+                {[
+                  { label: 'RK', val: charLinkData.full_data.armor_class },
+                  { label: 'Init', val: charLinkData.full_data.initiative >= 0 ? `+${charLinkData.full_data.initiative}` : `${charLinkData.full_data.initiative}` },
+                  { label: 'Speed', val: `${charLinkData.full_data.speed}ft` },
+                ].map(x => (
+                  <div key={x.label} className="bg-zinc-800 rounded-lg p-2 text-center">
+                    <p className="text-[9px] text-zinc-500">{x.label}</p>
+                    <p className="text-sm font-bold text-zinc-200">{x.val}</p>
+                  </div>
+                ))}
+              </div>
+            )}
+            {/* Attribute */}
+            {charLinkData.full_data?.stats && (
+              <div>
+                <p className="text-[10px] uppercase font-semibold text-zinc-500 mb-1">Attribute</p>
+                <div className="grid grid-cols-6 gap-1">
+                  {(['str','dex','con','int','wis','cha'] as const).map(k => {
+                    const v = charLinkData.full_data.stats[k] ?? 10
+                    const mod = Math.floor((v - 10) / 2)
+                    return (
+                      <div key={k} className="bg-zinc-800 rounded p-1 text-center">
+                        <p className="text-[8px] text-zinc-500 uppercase">{k}</p>
+                        <p className="text-xs font-bold text-zinc-100">{mod >= 0 ? `+${mod}` : `${mod}`}</p>
+                        <p className="text-[8px] text-zinc-600">{v}</p>
+                      </div>
+                    )
+                  })}
+                </div>
+              </div>
+            )}
+            {/* Fertigkeiten (skills) - kompakt */}
+            {charLinkData.full_data?.skills && charLinkData.full_data.skills.length > 0 && (
+              <div>
+                <p className="text-[10px] uppercase font-semibold text-zinc-500 mb-1">Fertigkeiten</p>
+                <div className="space-y-0.5">
+                  {charLinkData.full_data.skills.map((s: any) => (
+                    <div key={s.key} className="flex items-center gap-1.5">
+                      <span className={`w-1.5 h-1.5 rounded-full flex-shrink-0 ${s.proficient ? 'bg-emerald-400' : s.halfProficient ? 'bg-amber-400' : 'bg-zinc-600'}`} />
+                      <span className="flex-1 text-[10px] text-zinc-400 truncate">{s.nameDe}</span>
+                      <span className="text-[10px] font-semibold text-zinc-200">{s.bonus >= 0 ? `+${s.bonus}` : `${s.bonus}`}</span>
+                    </div>
+                  ))}
+                </div>
+              </div>
+            )}
+            {/* Rettungswürfe */}
+            {charLinkData.full_data?.saves && charLinkData.full_data.saves.length > 0 && (
+              <div>
+                <p className="text-[10px] uppercase font-semibold text-zinc-500 mb-1">Rettungswürfe</p>
+                <div className="grid grid-cols-2 gap-0.5">
+                  {charLinkData.full_data.saves.map((s: any) => (
+                    <div key={s.ability} className="flex items-center gap-1">
+                      <span className={`w-1.5 h-1.5 rounded-full flex-shrink-0 ${s.proficient ? 'bg-emerald-400' : 'bg-zinc-600'}`} />
+                      <span className="text-[10px] text-zinc-400 flex-1">{s.ability.toUpperCase()}</span>
+                      <span className="text-[10px] font-semibold text-zinc-200">{s.bonus >= 0 ? `+${s.bonus}` : `${s.bonus}`}</span>
+                    </div>
+                  ))}
+                </div>
+              </div>
+            )}
+            {/* Würfelboni (roll_bonuses) */}
+            {(charLinkData as any).roll_bonuses && (charLinkData as any).roll_bonuses.length > 0 && (
+              <div>
+                <p className="text-[10px] uppercase font-semibold text-zinc-500 mb-1">Würfelboni</p>
+                <div className="flex flex-wrap gap-1">
+                  {((charLinkData as any).roll_bonuses as Array<{id: string; label: string; bonus: number; note?: string}>).map(rb => (
+                    <div key={rb.id} className={`px-2 py-0.5 rounded-full text-[10px] font-semibold border ${rb.bonus >= 0 ? 'bg-emerald-900/30 border-emerald-700/50 text-emerald-300' : 'bg-red-900/30 border-red-700/50 text-red-300'}`}>
+                      {rb.label}: {rb.bonus >= 0 ? `+${rb.bonus}` : rb.bonus}
+                    </div>
+                  ))}
+                </div>
+              </div>
+            )}
+          </div>
+        </div>
+      )}
     </div>
   )
 }

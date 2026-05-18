@@ -18,6 +18,8 @@ interface CompanionAction {
   damage_bonus: number
   dice_config: DiceConfig[]
   notes: string
+  charges_max?: number   // 0 oder undefined = keine Ladungen
+  charges_used?: number
 }
 
 // "Fähigkeiten" section — spells/abilities with charges
@@ -48,6 +50,7 @@ interface CompanionCharacter {
   owner_id: string | null
   created_by: string | null
   favorite_dice: CompanionAction[]
+  bonus_actions: CompanionAction[]
   abilities: Ability[]
 }
 
@@ -152,6 +155,7 @@ function NoteAppendSection({ c, onAppend }: { c: CompanionCharacter; onAppend: (
 function CompanionCard({
   c, isGM, userId, onEdit, onDelete, deleteConfirmId, setDeleteConfirmId,
   onApplyHp, onUseAbility, onDeploy, onRest, onRollAction, onRollAbility, onAppendNote,
+  onUseAction, onRestoreAction,
 }: {
   c: CompanionCharacter
   isGM: boolean
@@ -167,6 +171,8 @@ function CompanionCard({
   onRollAction: (c: CompanionCharacter, action: CompanionAction, rollType: 'attack' | 'damage') => void
   onRollAbility: (c: CompanionCharacter, ability: Ability) => void
   onAppendNote: (c: CompanionCharacter, text: string) => Promise<void>
+  onUseAction: (c: CompanionCharacter, actionId: string, isBonus: boolean) => void
+  onRestoreAction: (c: CompanionCharacter, actionId: string, isBonus: boolean) => void
 }) {
   const cfg = TYPE_CONFIG[c.type] ?? TYPE_CONFIG.npc
   const canEdit = isGM || c.created_by === userId
@@ -301,21 +307,91 @@ function CompanionCard({
         {c.favorite_dice && c.favorite_dice.length > 0 && (
           <div className="space-y-1 pt-2 border-t border-zinc-800">
             <p className="text-[10px] uppercase font-semibold text-zinc-600">Aktionen</p>
-            {(c.favorite_dice as CompanionAction[]).map(a => (
-              <div key={a.id} className="flex items-center gap-1.5 px-2 py-1.5 rounded-lg bg-sky-950/20 border border-sky-900/40">
-                <span className="flex-1 text-xs text-zinc-200 truncate">{a.name}</span>
-                <button onClick={() => onRollAction(c, a, 'attack')}
-                  className="px-1.5 py-0.5 rounded bg-amber-900/30 border border-amber-700/50 text-[10px] text-amber-200 hover:bg-amber-900/50">
-                  Atk {a.attack_bonus >= 0 ? '+' : ''}{a.attack_bonus}
-                </button>
-                {(a.dice_config ?? []).length > 0 && (
-                  <button onClick={() => onRollAction(c, a, 'damage')}
-                    className="px-1.5 py-0.5 rounded bg-red-950/40 border border-red-800/50 text-[10px] text-red-300 hover:bg-red-900/50">
-                    Dmg
+            {(c.favorite_dice as CompanionAction[]).map(a => {
+              const hasCharges = (a.charges_max ?? 0) > 0
+              const chargesUsed = a.charges_used ?? 0
+              const exhausted = hasCharges && chargesUsed >= (a.charges_max ?? 0)
+              return (
+                <div key={a.id} className={`flex items-center gap-1.5 px-2 py-1.5 rounded-lg border ${exhausted ? 'bg-zinc-900/40 border-zinc-800/60 opacity-60' : 'bg-sky-950/20 border-sky-900/40'}`}>
+                  <span className="flex-1 text-xs text-zinc-200 truncate">{a.name}</span>
+                  {hasCharges && (
+                    <span className="flex gap-0.5">
+                      {Array.from({ length: a.charges_max! }).map((_, i) => (
+                        <span key={i} className={i < chargesUsed ? 'text-zinc-600' : 'text-sky-400'}>
+                          {i < chargesUsed ? '○' : '●'}
+                        </span>
+                      ))}
+                    </span>
+                  )}
+                  {hasCharges && (
+                    <>
+                      <button onClick={() => onUseAction(c, a.id, false)}
+                        disabled={exhausted}
+                        className="w-5 h-5 rounded bg-zinc-800 border border-zinc-700 text-[10px] text-zinc-400 hover:text-red-300 disabled:opacity-40 flex items-center justify-center">−</button>
+                      <button onClick={() => onRestoreAction(c, a.id, false)}
+                        disabled={chargesUsed <= 0}
+                        className="w-5 h-5 rounded bg-zinc-800 border border-zinc-700 text-[10px] text-zinc-400 hover:text-emerald-300 disabled:opacity-40 flex items-center justify-center">+</button>
+                    </>
+                  )}
+                  <button onClick={() => onRollAction(c, a, 'attack')}
+                    className="px-1.5 py-0.5 rounded bg-amber-900/30 border border-amber-700/50 text-[10px] text-amber-200 hover:bg-amber-900/50">
+                    Atk {a.attack_bonus >= 0 ? '+' : ''}{a.attack_bonus}
                   </button>
-                )}
-              </div>
-            ))}
+                  {(a.dice_config ?? []).length > 0 && (
+                    <button onClick={() => onRollAction(c, a, 'damage')}
+                      className="px-1.5 py-0.5 rounded bg-red-950/40 border border-red-800/50 text-[10px] text-red-300 hover:bg-red-900/50">
+                      Dmg
+                    </button>
+                  )}
+                </div>
+              )
+            })}
+          </div>
+        )}
+
+        {/* Bonus Aktionen */}
+        {c.bonus_actions && c.bonus_actions.length > 0 && (
+          <div className="space-y-1 pt-2 border-t border-zinc-800">
+            <p className="text-[10px] uppercase font-semibold text-zinc-600">Bonus-Aktionen</p>
+            {(c.bonus_actions as CompanionAction[]).map(a => {
+              const hasCharges = (a.charges_max ?? 0) > 0
+              const chargesUsed = a.charges_used ?? 0
+              const exhausted = hasCharges && chargesUsed >= (a.charges_max ?? 0)
+              return (
+                <div key={a.id} className={`flex items-center gap-1.5 px-2 py-1.5 rounded-lg border ${exhausted ? 'bg-zinc-900/40 border-zinc-800/60 opacity-60' : 'bg-teal-950/20 border-teal-900/40'}`}>
+                  <span className="flex-1 text-xs text-zinc-200 truncate">{a.name}</span>
+                  {hasCharges && (
+                    <span className="flex gap-0.5">
+                      {Array.from({ length: a.charges_max! }).map((_, i) => (
+                        <span key={i} className={i < chargesUsed ? 'text-zinc-600' : 'text-teal-400'}>
+                          {i < chargesUsed ? '○' : '●'}
+                        </span>
+                      ))}
+                    </span>
+                  )}
+                  {hasCharges && (
+                    <>
+                      <button onClick={() => onUseAction(c, a.id, true)}
+                        disabled={exhausted}
+                        className="w-5 h-5 rounded bg-zinc-800 border border-zinc-700 text-[10px] text-zinc-400 hover:text-red-300 disabled:opacity-40 flex items-center justify-center">−</button>
+                      <button onClick={() => onRestoreAction(c, a.id, true)}
+                        disabled={chargesUsed <= 0}
+                        className="w-5 h-5 rounded bg-zinc-800 border border-zinc-700 text-[10px] text-zinc-400 hover:text-emerald-300 disabled:opacity-40 flex items-center justify-center">+</button>
+                    </>
+                  )}
+                  <button onClick={() => onRollAction(c, a, 'attack')}
+                    className="px-1.5 py-0.5 rounded bg-teal-900/30 border border-teal-700/50 text-[10px] text-teal-200 hover:bg-teal-900/50">
+                    Atk {a.attack_bonus >= 0 ? '+' : ''}{a.attack_bonus}
+                  </button>
+                  {(a.dice_config ?? []).length > 0 && (
+                    <button onClick={() => onRollAction(c, a, 'damage')}
+                      className="px-1.5 py-0.5 rounded bg-red-950/40 border border-red-800/50 text-[10px] text-red-300 hover:bg-red-900/50">
+                      Dmg
+                    </button>
+                  )}
+                </div>
+              )
+            })}
           </div>
         )}
 
@@ -424,6 +500,8 @@ function CompanionForm({
   isEdit,
   formDice,
   setFormDice,
+  formBonusActions,
+  setFormBonusActions,
   formAbilities,
   setFormAbilities,
 }: {
@@ -435,6 +513,8 @@ function CompanionForm({
   isEdit: boolean
   formDice: CompanionAction[]
   setFormDice: (d: CompanionAction[]) => void
+  formBonusActions: CompanionAction[]
+  setFormBonusActions: (a: CompanionAction[]) => void
   formAbilities: Ability[]
   setFormAbilities: (a: Ability[]) => void
 }) {
@@ -450,7 +530,7 @@ function CompanionForm({
 
   // Actions (Aktionen)
   const addAction = () => {
-    setFormDice([...formDice, { id: crypto.randomUUID(), name: '', attack_bonus: 0, damage_bonus: 0, dice_config: [], notes: '' }])
+    setFormDice([...formDice, { id: crypto.randomUUID(), name: '', attack_bonus: 0, damage_bonus: 0, dice_config: [], notes: '', charges_max: 0, charges_used: 0 }])
   }
   const removeAction = (id: string) => setFormDice(formDice.filter(a => a.id !== id))
   const updateAction = (id: string, patch: Partial<CompanionAction>) =>
@@ -461,6 +541,20 @@ function CompanionForm({
     setFormDice(formDice.map(a => a.id === id ? { ...a, dice_config: a.dice_config.filter((_, i) => i !== idx) } : a))
   const updateActionDice = (id: string, idx: number, dc: DiceConfig) =>
     setFormDice(formDice.map(a => a.id === id ? { ...a, dice_config: a.dice_config.map((d, i) => i === idx ? dc : d) } : a))
+
+  // Bonus Actions (Bonus-Aktionen)
+  const addBonusAction = () => {
+    setFormBonusActions([...formBonusActions, { id: crypto.randomUUID(), name: '', attack_bonus: 0, damage_bonus: 0, dice_config: [], notes: '', charges_max: 0, charges_used: 0 }])
+  }
+  const removeBonusAction = (id: string) => setFormBonusActions(formBonusActions.filter(a => a.id !== id))
+  const updateBonusAction = (id: string, patch: Partial<CompanionAction>) =>
+    setFormBonusActions(formBonusActions.map(a => a.id === id ? { ...a, ...patch } : a))
+  const addBonusActionDice = (id: string) =>
+    setFormBonusActions(formBonusActions.map(a => a.id === id ? { ...a, dice_config: [...a.dice_config, { type: 'd6', count: 1 }] } : a))
+  const removeBonusActionDice = (id: string, idx: number) =>
+    setFormBonusActions(formBonusActions.map(a => a.id === id ? { ...a, dice_config: a.dice_config.filter((_, i) => i !== idx) } : a))
+  const updateBonusActionDice = (id: string, idx: number, dc: DiceConfig) =>
+    setFormBonusActions(formBonusActions.map(a => a.id === id ? { ...a, dice_config: a.dice_config.map((d, i) => i === idx ? dc : d) } : a))
 
   // Abilities (Fähigkeiten)
   const addAbility = () => {
@@ -593,7 +687,7 @@ function CompanionForm({
                   <X className="w-3.5 h-3.5" />
                 </button>
               </div>
-              <div className="flex items-center gap-3">
+              <div className="flex items-center gap-3 flex-wrap">
                 <div className="flex items-center gap-1.5">
                   <label className="text-[10px] text-zinc-500 whitespace-nowrap">Angriff +</label>
                   <input
@@ -610,6 +704,16 @@ function CompanionForm({
                     value={a.damage_bonus}
                     onChange={e => updateAction(a.id, { damage_bonus: parseInt(e.target.value) || 0 })}
                     className="w-14 bg-zinc-800 border border-zinc-700 rounded px-1.5 py-1 text-xs text-zinc-100 text-center focus:outline-none focus:border-amber-500"
+                  />
+                </div>
+                <div className="flex items-center gap-1.5">
+                  <label className="text-[10px] text-zinc-500 whitespace-nowrap">Ladungen max (0=∞)</label>
+                  <input
+                    type="number"
+                    min={0}
+                    value={a.charges_max ?? 0}
+                    onChange={e => updateAction(a.id, { charges_max: parseInt(e.target.value) || 0, charges_used: 0 })}
+                    className="w-12 bg-zinc-800 border border-zinc-700 rounded px-1.5 py-1 text-xs text-zinc-100 text-center focus:outline-none focus:border-amber-500"
                   />
                 </div>
               </div>
@@ -634,6 +738,87 @@ function CompanionForm({
                 value={a.notes}
                 onChange={e => updateAction(a.id, { notes: e.target.value })}
                 className="w-full bg-zinc-800 border border-zinc-700 rounded px-2 py-1 text-xs text-zinc-100 placeholder-zinc-600 focus:outline-none focus:border-amber-500"
+              />
+            </div>
+          ))}
+        </div>
+      </div>
+
+      {/* Bonus Aktionen */}
+      <div>
+        <div className="flex items-center justify-between mb-2">
+          <label className="text-xs font-medium text-teal-400">Bonus Aktionen</label>
+          <button type="button" onClick={addBonusAction}
+            className="text-[10px] px-2 py-1 rounded bg-zinc-800 border border-zinc-700 text-zinc-400 hover:text-zinc-200 hover:border-zinc-500">
+            + Hinzufügen
+          </button>
+        </div>
+        <div className="space-y-3">
+          {formBonusActions.map(a => (
+            <div key={a.id} className="bg-teal-950/20 border border-teal-900/40 rounded-lg p-3 space-y-2">
+              <div className="flex gap-2 items-center">
+                <input
+                  type="text"
+                  placeholder="Name der Bonus-Aktion"
+                  value={a.name}
+                  onChange={e => updateBonusAction(a.id, { name: e.target.value })}
+                  className="flex-1 bg-zinc-800 border border-zinc-700 rounded px-2 py-1 text-xs text-zinc-100 placeholder-zinc-600 focus:outline-none focus:border-teal-500"
+                />
+                <button type="button" onClick={() => removeBonusAction(a.id)}
+                  className="p-1 text-zinc-600 hover:text-red-400 flex-shrink-0">
+                  <X className="w-3.5 h-3.5" />
+                </button>
+              </div>
+              <div className="flex items-center gap-3 flex-wrap">
+                <div className="flex items-center gap-1.5">
+                  <label className="text-[10px] text-zinc-500 whitespace-nowrap">Angriff +</label>
+                  <input
+                    type="number"
+                    value={a.attack_bonus}
+                    onChange={e => updateBonusAction(a.id, { attack_bonus: parseInt(e.target.value) || 0 })}
+                    className="w-14 bg-zinc-800 border border-zinc-700 rounded px-1.5 py-1 text-xs text-zinc-100 text-center focus:outline-none focus:border-teal-500"
+                  />
+                </div>
+                <div className="flex items-center gap-1.5">
+                  <label className="text-[10px] text-zinc-500 whitespace-nowrap">Schaden +</label>
+                  <input
+                    type="number"
+                    value={a.damage_bonus}
+                    onChange={e => updateBonusAction(a.id, { damage_bonus: parseInt(e.target.value) || 0 })}
+                    className="w-14 bg-zinc-800 border border-zinc-700 rounded px-1.5 py-1 text-xs text-zinc-100 text-center focus:outline-none focus:border-teal-500"
+                  />
+                </div>
+                <div className="flex items-center gap-1.5">
+                  <label className="text-[10px] text-zinc-500 whitespace-nowrap">Ladungen max (0=∞)</label>
+                  <input
+                    type="number"
+                    min={0}
+                    value={a.charges_max ?? 0}
+                    onChange={e => updateBonusAction(a.id, { charges_max: parseInt(e.target.value) || 0, charges_used: 0 })}
+                    className="w-12 bg-zinc-800 border border-zinc-700 rounded px-1.5 py-1 text-xs text-zinc-100 text-center focus:outline-none focus:border-teal-500"
+                  />
+                </div>
+              </div>
+              <div className="space-y-1">
+                {a.dice_config.map((dc, idx) => (
+                  <DiceRow
+                    key={idx}
+                    dc={dc}
+                    onChange={newDc => updateBonusActionDice(a.id, idx, newDc)}
+                    onRemove={() => removeBonusActionDice(a.id, idx)}
+                  />
+                ))}
+                <button type="button" onClick={() => addBonusActionDice(a.id)}
+                  className="text-[10px] px-2 py-0.5 rounded bg-zinc-800 border border-zinc-700 text-zinc-500 hover:text-zinc-300">
+                  + Würfel
+                </button>
+              </div>
+              <input
+                type="text"
+                placeholder="Notiz (optional)"
+                value={a.notes}
+                onChange={e => updateBonusAction(a.id, { notes: e.target.value })}
+                className="w-full bg-zinc-800 border border-zinc-700 rounded px-2 py-1 text-xs text-zinc-100 placeholder-zinc-600 focus:outline-none focus:border-teal-500"
               />
             </div>
           ))}
@@ -777,6 +962,7 @@ export default function ExtrasPage() {
   const [editingItem, setEditingItem]       = useState<CompanionCharacter | null>(null)
   const [form, setForm]                     = useState<FormState>(EMPTY_FORM)
   const [formDice, setFormDice]             = useState<CompanionAction[]>([])
+  const [formBonusActions, setFormBonusActions] = useState<CompanionAction[]>([])
   const [formAbilities, setFormAbilities]   = useState<Ability[]>([])
   const [saving, setSaving]                 = useState(false)
   const [deleteConfirmId, setDeleteConfirmId] = useState<string | null>(null)
@@ -807,6 +993,7 @@ export default function ExtrasPage() {
     setEditingItem(null)
     setForm(EMPTY_FORM)
     setFormDice([])
+    setFormBonusActions([])
     setFormAbilities([])
     setShowModal(true)
   }
@@ -838,8 +1025,23 @@ export default function ExtrasPage() {
       damage_bonus: a.damage_bonus ?? 0,
       dice_config: a.dice_config ?? (a.dice ? [{ type: 'd6', count: 1 }] : []),
       notes: a.notes ?? '',
+      charges_max: a.charges_max ?? 0,
+      charges_used: a.charges_used ?? 0,
     }))
     setFormDice(parsedActions)
+
+    // Parse bonus actions with backward compat
+    const parsedBonusActions: CompanionAction[] = (c.bonus_actions ?? []).map((a: any) => ({
+      id: a.id ?? crypto.randomUUID(),
+      name: a.name ?? '',
+      attack_bonus: a.attack_bonus ?? 0,
+      damage_bonus: a.damage_bonus ?? 0,
+      dice_config: a.dice_config ?? [],
+      notes: a.notes ?? '',
+      charges_max: a.charges_max ?? 0,
+      charges_used: a.charges_used ?? 0,
+    }))
+    setFormBonusActions(parsedBonusActions)
 
     // Parse abilities with backward compat
     const parsedAbilities: Ability[] = (c.abilities ?? []).map((a: any) => ({
@@ -862,6 +1064,7 @@ export default function ExtrasPage() {
     setEditingItem(null)
     setForm(EMPTY_FORM)
     setFormDice([])
+    setFormBonusActions([])
     setFormAbilities([])
   }
 
@@ -885,8 +1088,9 @@ export default function ExtrasPage() {
       wis:           parseOptionalInt(form.wis),
       cha:           parseOptionalInt(form.cha),
       notes:         form.notes.trim() || null,
-      favorite_dice: formDice,
-      abilities:     formAbilities,
+      favorite_dice:  formDice,
+      bonus_actions:  formBonusActions,
+      abilities:      formAbilities,
     }
 
     if (editingItem) {
@@ -923,6 +1127,24 @@ export default function ExtrasPage() {
         ? { ...a, charges_used: a.charges_used + 1 } : a
     )
     await supabase.from('companion_characters').update({ abilities }).eq('id', c.id)
+  }
+
+  const useAction = async (c: CompanionCharacter, actionId: string, isBonus: boolean) => {
+    const field = isBonus ? 'bonus_actions' : 'favorite_dice'
+    const actions = ((isBonus ? c.bonus_actions : c.favorite_dice) ?? []).map((a: CompanionAction) =>
+      a.id === actionId && ((a.charges_max ?? 0) === 0 || (a.charges_used ?? 0) < (a.charges_max ?? 0))
+        ? { ...a, charges_used: (a.charges_used ?? 0) + 1 } : a
+    )
+    await supabase.from('companion_characters').update({ [field]: actions }).eq('id', c.id)
+  }
+
+  const restoreAction = async (c: CompanionCharacter, actionId: string, isBonus: boolean) => {
+    const field = isBonus ? 'bonus_actions' : 'favorite_dice'
+    const actions = ((isBonus ? c.bonus_actions : c.favorite_dice) ?? []).map((a: CompanionAction) =>
+      a.id === actionId && (a.charges_used ?? 0) > 0
+        ? { ...a, charges_used: (a.charges_used ?? 0) - 1 } : a
+    )
+    await supabase.from('companion_characters').update({ [field]: actions }).eq('id', c.id)
   }
 
   const doDeployToMap = async (c: CompanionCharacter, mapId: string) => {
@@ -983,7 +1205,9 @@ export default function ExtrasPage() {
 
   const longRest = async (c: CompanionCharacter) => {
     const abilities = (c.abilities ?? []).map((a: Ability) => ({ ...a, charges_used: 0 }))
-    await supabase.from('companion_characters').update({ current_hp: c.max_hp, abilities }).eq('id', c.id)
+    const favorite_dice = (c.favorite_dice ?? []).map((a: CompanionAction) => ({ ...a, charges_used: 0 }))
+    const bonus_actions = (c.bonus_actions ?? []).map((a: CompanionAction) => ({ ...a, charges_used: 0 }))
+    await supabase.from('companion_characters').update({ current_hp: c.max_hp, abilities, favorite_dice, bonus_actions }).eq('id', c.id)
     // Also restore HP on any linked token or placed model
     if (c.max_hp != null) {
       await supabase.from('battle_tokens').update({ current_hp: c.max_hp }).eq('companion_id', c.id)
@@ -1157,6 +1381,8 @@ export default function ExtrasPage() {
               onRollAction={rollCompanionAction}
               onRollAbility={rollAbility}
               onAppendNote={appendNote}
+              onUseAction={useAction}
+              onRestoreAction={restoreAction}
             />
           ))}
         </div>
@@ -1186,6 +1412,8 @@ export default function ExtrasPage() {
               isEdit={!!editingItem}
               formDice={formDice}
               setFormDice={setFormDice}
+              formBonusActions={formBonusActions}
+              setFormBonusActions={setFormBonusActions}
               formAbilities={formAbilities}
               setFormAbilities={setFormAbilities}
             />

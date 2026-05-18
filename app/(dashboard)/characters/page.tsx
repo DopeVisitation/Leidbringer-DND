@@ -37,6 +37,14 @@ const SCHOOL_COLORS: Record<string, string> = {
   transmutation:'bg-orange-900/40 text-orange-300 border-orange-700/30',
 }
 
+// ── Roll Bonus ─────────────────────────────────────────────────────────────────
+interface RollBonus {
+  id: string
+  label: string
+  bonus: number
+  note?: string
+}
+
 // ── Roll Toast ─────────────────────────────────────────────────────────────────
 interface RollResult {
   id: number
@@ -552,6 +560,145 @@ function ClassResourcesTracker({
   )
 }
 
+// ── Roll Bonuses Section ───────────────────────────────────────────────────────
+function RollBonusesSection({
+  linkId, bonuses, readonly = false,
+}: {
+  linkId: string
+  bonuses: RollBonus[]
+  readonly?: boolean
+}) {
+  const supabase = createClient()
+  const [local, setLocal] = useState<RollBonus[]>(bonuses)
+  const [editMode, setEditMode] = useState(false)
+  const [newLabel, setNewLabel] = useState('')
+  const [newBonus, setNewBonus] = useState(0)
+  const [newNote, setNewNote] = useState('')
+  const [adding, setAdding] = useState(false)
+
+  useEffect(() => { setLocal(bonuses) }, [JSON.stringify(bonuses)]) // eslint-disable-line react-hooks/exhaustive-deps
+
+  const save = async (updated: RollBonus[]) => {
+    setLocal(updated)
+    await supabase.from('character_links').update({ roll_bonuses: updated }).eq('id', linkId)
+  }
+
+  const addBonus = async () => {
+    if (!newLabel.trim()) return
+    const updated = [...local, { id: crypto.randomUUID(), label: newLabel.trim(), bonus: newBonus, note: newNote.trim() || undefined }]
+    await save(updated)
+    setNewLabel(''); setNewBonus(0); setNewNote(''); setAdding(false)
+  }
+
+  const removeBonus = async (id: string) => {
+    await save(local.filter(b => b.id !== id))
+  }
+
+  const updateBonus = async (id: string, patch: Partial<RollBonus>) => {
+    await save(local.map(b => b.id === id ? { ...b, ...patch } : b))
+  }
+
+  if (local.length === 0 && readonly && !editMode) return null
+
+  return (
+    <div className="space-y-2">
+      <div className="flex items-center justify-between">
+        <div className="flex items-center gap-1.5 text-xs text-zinc-400">
+          <Star className="w-3.5 h-3.5 text-emerald-400" />
+          <span className="font-semibold">Würfelboni</span>
+        </div>
+        {!readonly && (
+          <button
+            onClick={() => setEditMode(e => !e)}
+            className={`flex items-center gap-1 px-2 py-0.5 rounded text-[11px] transition-colors ${editMode ? 'text-amber-400 bg-amber-600/20' : 'text-zinc-500 hover:text-zinc-300 hover:bg-zinc-800'}`}
+          >
+            {editMode ? 'Fertig' : 'Bearbeiten'}
+          </button>
+        )}
+      </div>
+
+      {local.length === 0 && !editMode && (
+        <p className="text-xs text-zinc-600 py-1">Keine Würfelboni</p>
+      )}
+
+      <div className="flex flex-wrap gap-1.5">
+        {local.map(rb => (
+          <div key={rb.id} className={`flex items-center gap-1 px-2 py-0.5 rounded-full border text-[11px] font-semibold ${
+            rb.bonus >= 0
+              ? 'bg-emerald-900/30 border-emerald-700/50 text-emerald-300'
+              : 'bg-red-900/30 border-red-700/50 text-red-300'
+          }`}>
+            {editMode ? (
+              <>
+                <input
+                  value={rb.label}
+                  onChange={e => updateBonus(rb.id, { label: e.target.value })}
+                  className="bg-transparent border-none outline-none w-20 text-[11px]"
+                />
+                <input
+                  type="number"
+                  value={rb.bonus}
+                  onChange={e => updateBonus(rb.id, { bonus: parseInt(e.target.value) || 0 })}
+                  className="bg-transparent border-none outline-none w-8 text-[11px] text-center"
+                />
+                <button onClick={() => removeBonus(rb.id)} className="text-red-400 hover:text-red-300 ml-1">×</button>
+              </>
+            ) : (
+              <span title={rb.note}>{rb.label}: {rb.bonus >= 0 ? `+${rb.bonus}` : rb.bonus}</span>
+            )}
+          </div>
+        ))}
+      </div>
+
+      {editMode && !adding && (
+        <button
+          onClick={() => setAdding(true)}
+          className="flex items-center gap-1 px-2 py-1 rounded text-[11px] text-emerald-400 bg-emerald-900/10 hover:bg-emerald-900/20 border border-emerald-700/20 transition-colors"
+        >
+          <Plus className="w-3 h-3" /> Bonus hinzufügen
+        </button>
+      )}
+
+      {adding && (
+        <div className="flex flex-wrap items-center gap-1.5 bg-zinc-800/50 rounded-lg p-2 border border-zinc-700/40">
+          <input
+            autoFocus
+            placeholder="z.B. Weisheit"
+            value={newLabel}
+            onChange={e => setNewLabel(e.target.value)}
+            className="flex-1 min-w-[100px] bg-zinc-800 border border-zinc-700 rounded px-2 py-1 text-xs text-zinc-100 placeholder-zinc-500 focus:outline-none focus:border-emerald-500"
+          />
+          <input
+            type="number"
+            value={newBonus}
+            onChange={e => setNewBonus(parseInt(e.target.value) || 0)}
+            className="w-14 bg-zinc-800 border border-zinc-700 rounded px-1.5 py-1 text-xs text-zinc-100 text-center focus:outline-none focus:border-emerald-500"
+          />
+          <input
+            placeholder="Notiz (opt.)"
+            value={newNote}
+            onChange={e => setNewNote(e.target.value)}
+            className="flex-1 min-w-[80px] bg-zinc-800 border border-zinc-700 rounded px-2 py-1 text-xs text-zinc-100 placeholder-zinc-500 focus:outline-none focus:border-emerald-500"
+          />
+          <button
+            onClick={addBonus}
+            disabled={!newLabel.trim()}
+            className="px-2 py-1 rounded bg-emerald-700 hover:bg-emerald-600 disabled:opacity-50 text-[11px] text-white font-semibold"
+          >
+            +
+          </button>
+          <button
+            onClick={() => { setAdding(false); setNewLabel(''); setNewBonus(0); setNewNote('') }}
+            className="px-2 py-1 rounded bg-zinc-700 text-[11px] text-zinc-400 hover:text-zinc-200"
+          >
+            ✕
+          </button>
+        </div>
+      )}
+    </div>
+  )
+}
+
 // ── GM Character Card ──────────────────────────────────────────────────────────
 function GMCharacterCard({ c, onRefresh, onSlotsUpdate, onHpUpdate, onResourcesUpdate, onRoll }: {
   c: CharacterLink & { user: User }
@@ -757,6 +904,15 @@ function GMCharacterCard({ c, onRefresh, onSlotsUpdate, onHpUpdate, onResourcesU
                 readonly={true}
               />
             </div>
+
+            {/* Roll Bonuses (editable for GM) */}
+            <div className="pt-1 border-t border-zinc-800/60">
+              <RollBonusesSection
+                linkId={c.id}
+                bonuses={(c as any).roll_bonuses ?? []}
+                readonly={false}
+              />
+            </div>
           </div>
 
           {/* Expanded details */}
@@ -891,12 +1047,13 @@ function GMCharacterCard({ c, onRefresh, onSlotsUpdate, onHpUpdate, onResourcesU
 
 // ── Player Character Tabs ──────────────────────────────────────────────────────
 function PlayerCharacterTabs({
-  linkId, slots, spells, resources, className, onSlotsUpdate, onResourcesUpdate,
+  linkId, slots, spells, resources, rollBonuses, className, onSlotsUpdate, onResourcesUpdate,
 }: {
   linkId: string
   slots: SpellSlots
   spells: Array<{ name: string; level: number; school: string }>
   resources: ClassResources
+  rollBonuses: RollBonus[]
   className?: string | null
   onSlotsUpdate: (s: SpellSlots) => void
   onResourcesUpdate: (r: ClassResources) => void
@@ -947,6 +1104,15 @@ function PlayerCharacterTabs({
           resources={resources}
           className={className}
           onUpdate={onResourcesUpdate}
+          readonly={false}
+        />
+      </div>
+
+      {/* Roll Bonuses */}
+      <div className="bg-zinc-900 border border-zinc-800 rounded-xl p-4">
+        <RollBonusesSection
+          linkId={linkId}
+          bonuses={rollBonuses}
           readonly={false}
         />
       </div>
@@ -1064,6 +1230,7 @@ export default function CharactersPage() {
   const playerSpells: Array<{ name: string; level: number; school: string }> =
     (character?.full_data as CharacterFullData | undefined)?.spells ?? []
   const playerResources: ClassResources = (character as any)?.class_resources ?? {}
+  const playerRollBonuses: RollBonus[] = (character as any)?.roll_bonuses ?? []
 
   return (
     <div className="p-4 md:p-6 max-w-2xl mx-auto space-y-5">
@@ -1116,6 +1283,7 @@ export default function CharactersPage() {
               slots={playerSlots}
               spells={playerSpells}
               resources={playerResources}
+              rollBonuses={playerRollBonuses}
               className={character.class_name}
               onSlotsUpdate={handlePlayerSlotsUpdate}
               onResourcesUpdate={handlePlayerResourcesUpdate}
